@@ -14,12 +14,12 @@ jobs:
 
     - name: Last ned XML fra Avinor
       run: |
-        curl -s "https://asrv.avinor.no/XmlFeed/v1.0?TimeFrom=-2&TimeTo=6&airport=TOS" -o flydata.xml
+        curl -s "https://asrv.avinor.no/XmlFeed/v1.0?airport=TOS" -o flydata.xml
 
     - name: Lagre filen i repositoriet
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
         git add flydata.xml
-        git commit -m "Oppdatert flydata fra Avinor (inkludert historikk)" || exit 0
+        git commit -m "Oppdatert flydata fra Avinor (fullstendig dump)" || exit 0
         git push
