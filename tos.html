@@ -97,6 +97,12 @@
 
         tr { border-bottom: 1px solid #334155; }
         tr:last-child { border-bottom: none; }
+        
+        tr.history {
+            opacity: 0.55;
+            background-color: #131c2e;
+        }
+        
         tr:hover td { background-color: #253348; }
 
         .time { font-weight: 700; color: #ffffff; font-size: 16px; }
@@ -120,6 +126,7 @@
 
         .status-ok { color: var(--success); font-weight: 500; }
         .status-delay { color: var(--danger); font-weight: 600; }
+        .status-past { color: var(--text-muted); font-style: italic; }
     </style>
 </head>
 <body>
@@ -165,7 +172,6 @@
         if (lagretXmlDoc) visData();
     }
 
-    // Hjelpefunksjon for å gjøre UTC-tid om til lokal norsk tid (HH:MM)
     function formaterLokalTid(isoStreng) {
         if (!isoStreng) return "--:--";
         const dato = new Date(isoStreng);
@@ -195,63 +201,85 @@
     }
 
     function visData() {
-        const flights = lagretXmlDoc.getElementsByTagName("flight");
+        const flightsNodes = lagretXmlDoc.getElementsByTagName("flight");
+        const nuhue = new Date();
         let html = "";
+        
+        let flightsArray = Array.from(flightsNodes);
+        
+        // Sorterer listen kronologisk basert på oppgitt rutetid
+        flightsArray.sort((a, b) => {
+            const tidA = new Date(a.getElementsByTagName("schedule_time")[0]?.textContent || 0);
+            const tidB = new Date(b.getElementsByTagName("schedule_time")[0]?.textContent || 0);
+            return tidA - tidB;
+        });
+
         let antallFly = 0;
 
-        for (let i = 0; i < flights.length; i++) {
-            const flight = flights[i];
-            
+        for (let flight of flightsArray) {
             if (flight.getElementsByTagName("arr_dep")[0]?.textContent !== gjeldendeRetning) continue;
             antallFly++;
 
-            // Henter rutetid og gjør om til lokal tid
             const tidRaw = flight.getElementsByTagName("schedule_time")[0]?.textContent;
+            const flyDato = new Date(tidRaw);
             const tid = formaterLokalTid(tidRaw);
             
             const flynr = flight.getElementsByTagName("flight_id")[0]?.textContent || "-";
             const selskap = flight.getElementsByTagName("airline")[0]?.textContent || "-";
             const sted = flight.getElementsByTagName("airport")[0]?.textContent || "-";
             
-            // Henter gate-informasjon (viser ingenting/dash hvis ikke tildelt enda)
             const gateNode = flight.getElementsByTagName("gate")[0]?.textContent;
             const gate = gateNode ? `<span class="gate">${gateNode}</span>` : "-";
             
-            // Statushåndtering med lokal tidskorrigering
             const statusNode = flight.getElementsByTagName("status")[0];
             let status = "I rute";
             let klasse = "status-ok";
+            let radKlasse = "";
+
+            // Sjekker om flytiden opprinnelig har passert nåtid
+            if (flyDato < nuhue) {
+                radKlasse = 'class="history"';
+                status = gjeldendeRetning === 'D' ? "Nylig avreist" : "Nylig ankommet";
+                klasse = "status-past";
+            }
             
             if (statusNode) {
                 const kode = statusNode.getAttribute("code");
-                const statusTidRaw = statusNode.getAttribute("time");
-                const statusTid = formaterLokalTid(statusTidRaw);
+                const statusTid = formaterLokalTid(statusNode.getAttribute("time"));
 
                 if (kode === "E") {
                     status = "Ny tid: " + statusTid;
                     klasse = "status-delay";
+                    // Hvis den nye tiden fortsatt er frem i tid, fjerner vi mørkleggingen av raden
+                    if (new Date(statusNode.getAttribute("time")) > nuhue) {
+                        radKlasse = "";
+                    }
                 } else if (kode === "C") {
                     status = "Innstilt";
                     klasse = "status-delay";
                 } else if (kode === "D") {
                     status = "Gått " + statusTid;
+                    klasse = "status-past";
+                    radKlasse = 'class="history"';
                 } else if (kode === "A") {
                     status = "Landet " + statusTid;
+                    klasse = "status-past";
+                    radKlasse = 'class="history"';
                 }
             }
 
             html += `<tr>
-                <td class="time">${tid}</td>
-                <td><span class="flight-id">${flynr}</span></td>
-                <td>${selskap}</td>
-                <td><b>${sted}</b></td>
-                <td>${gate}</td>
+                <td ${radKlasse}><span class="time">${tid}</span></td>
+                <td ${radKlasse}><span class="flight-id">${flynr}</span></td>
+                <td ${radKlasse}>${selskap}</td>
+                <td ${radKlasse}><b>${sted}</b></td>
+                <td ${radKlasse}>${gate}</td>
                 <td class="${klasse}">${status}</td>
             </tr>`;
         }
 
         if (antallFly === 0) {
-            html = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Ingen planlagte flyvninger funnet.</td></tr>`;
+            html = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">Ingen planlagte eller nylige flyvninger funnet.</td></tr>`;
         }
 
         document.getElementById('tabell-body').innerHTML = html;
@@ -259,8 +287,6 @@
 
     lastFlydata();
     setInterval(lastFlydata, 60000);
-</script>
-
 </script>
 
 </body>
