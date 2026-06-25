@@ -73,6 +73,7 @@
             background: var(--card-bg);
             padding: 6px 12px;
             border-radius: 20px;
+            transition: all 0.3s ease;
         }
 
         table {
@@ -193,7 +194,10 @@
             lagretXmlDoc = parser.parseFromString(xmlTekst, "application/xml");
             
             visData();
-            statusTekst.innerText = "Sist synkronisert: " + new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'});
+            
+            statusTekst.style.color = '#38bdf8'; 
+            statusTekst.innerText = "Oppdatert: " + new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+            setTimeout(() => { statusTekst.style.color = ''; }, 1000);
 
         } catch (feil) {
             statusTekst.innerText = feil.message;
@@ -207,7 +211,7 @@
         
         let flightsArray = Array.from(flightsNodes);
         
-        // Sorterer listen kronologisk basert på oppgitt rutetid
+        // Sorterer listen kronologisk
         flightsArray.sort((a, b) => {
             const tidA = new Date(a.getElementsByTagName("schedule_time")[0]?.textContent || 0);
             const tidB = new Date(b.getElementsByTagName("schedule_time")[0]?.textContent || 0);
@@ -218,12 +222,18 @@
 
         for (let flight of flightsArray) {
             if (flight.getElementsByTagName("arr_dep")[0]?.textContent !== gjeldendeRetning) continue;
-            antallFly++;
 
             const tidRaw = flight.getElementsByTagName("schedule_time")[0]?.textContent;
-            const flyDato = new Date(tidRaw);
-            const tid = formaterLokalTid(tidRaw);
+            if (!tidRaw) continue;
             
+            const flyDato = new Date(tidRaw);
+            
+            // LOKALT FILTER: Sorterer bort alt som er eldre enn 3 timer, og alt som er mer enn 8 timer frem i tid
+            const timeDiff = (flyDato - nuhue) / (1000 * 60 * 60);
+            if (timeDiff < -3 || timeDiff > 8) continue;
+
+            antallFly++;
+            const tid = formaterLokalTid(tidRaw);
             const flynr = flight.getElementsByTagName("flight_id")[0]?.textContent || "-";
             const selskap = flight.getElementsByTagName("airline")[0]?.textContent || "-";
             const sted = flight.getElementsByTagName("airport")[0]?.textContent || "-";
@@ -236,7 +246,6 @@
             let klasse = "status-ok";
             let radKlasse = "";
 
-            // Sjekker om flytiden opprinnelig har passert nåtid
             if (flyDato < nuhue) {
                 radKlasse = 'class="history"';
                 status = gjeldendeRetning === 'D' ? "Nylig avreist" : "Nylig ankommet";
@@ -250,7 +259,6 @@
                 if (kode === "E") {
                     status = "Ny tid: " + statusTid;
                     klasse = "status-delay";
-                    // Hvis den nye tiden fortsatt er frem i tid, fjerner vi mørkleggingen av raden
                     if (new Date(statusNode.getAttribute("time")) > nuhue) {
                         radKlasse = "";
                     }
@@ -286,7 +294,7 @@
     }
 
     lastFlydata();
-    setInterval(lastFlydata, 60000);
+    setInterval(lastFlydata, 30000);
 </script>
 
 </body>
