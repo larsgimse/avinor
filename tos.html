@@ -90,7 +90,7 @@
 <div class="container">
     <header>
         <h1>Tromsø Lufthavn <span>• Avganger</span></h1>
-        <div id="status" class="status-indicator">Venter på første datanedlasting...</div>
+        <div id="status" class="status-indicator">Klargjør data...</div>
     </header>
 
     <table>
@@ -113,7 +113,7 @@
         const statusTekst = document.getElementById('status');
         
         try {
-            // Henter filen lokalt fra ditt eget repositorium uten proxy!
+            // Henter filen lokalt fra ditt eget repositorium uten proxy
             const response = await fetch('flydata.xml?cachebuster=' + new Date().getTime());
             
             if (!response.ok) {
@@ -144,14 +144,14 @@
                 let klasse = "status-ok";
                 
                 if (statusNode) {
-                    const kode = statusNode.getAttribute("code");
-                    if (code === "E") {
+                    const kode = statusNode.getAttribute("code"); // Rettet: Nå defineres variabelen korrekt
+                    if (kode === "E") {
                         status = "Ny tid: " + statusNode.getAttribute("time")?.substring(11, 16);
                         klasse = "status-delay";
-                    } else if (code === "C") {
+                    } else if (kode === "C") {
                         status = "Innstilt";
                         klasse = "status-delay";
-                    } else if (code === "D") {
+                    } else if (kode === "D") {
                         status = "Gått " + statusNode.getAttribute("time")?.substring(11, 16);
                     }
                 }
@@ -165,6 +165,10 @@
                 </tr>`;
             }
 
+            if (antallFly === 0) {
+                html = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Ingen planlagte flyvninger funnet i XML-filen.</td></tr>`;
+            }
+
             document.getElementById('tabell-body').innerHTML = html;
             statusTekst.innerText = "Sist synkronisert: " + new Date().toLocaleTimeString('no-NO', {hour: '2-digit', minute:'2-digit'});
 
@@ -173,7 +177,9 @@
         }
     }
 
+    // Kjører med en gang siden åpnes
     lesFlydata();
+    
     // Sjekker etter oppdatert fil hvert 60. sekund
     setInterval(lesFlydata, 60000);
 </script>
