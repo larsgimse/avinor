@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tromsø Flyplass & Flyradar</title>
+    <style>
+        body { font-family: monospace, sans-serif; background-color: #ffffff; color: #000000; padding: 10px; margin: 0; }
+        h2 { margin-bottom: 5px; border-bottom: 2px solid #000000; padding-bottom: 5px; font-size: 1.2rem; margin-top: 20px; }
+        .meta { font-size: 0.8rem; margin-top: 25px; border-top: 1px dashed #000000; padding-top: 10px; line-height: 1.4; }
+        button { background-color: #ffffff; color: #000000; border: 2px solid #000000; padding: 8px 15px; font-size: 1rem; font-weight: bold; cursor: pointer; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
+        .tab-menu { display: flex; width: 100%; margin-bottom: 10px; border: 2px solid #000000; box-sizing: border-box; }
+        .tab-btn { flex: 1; background-color: #ffffff; color: #000000; border: none; padding: 10px; font-weight: bold; font-family: monospace; cursor: pointer; text-align: center; }
+        .tab-btn.active { background-color: #000000; color: #ffffff; }
+        table { width: 100%; border-collapse: collapse; margin-top: 5px; margin-bottom: 15px; }
+        th, td { border-bottom: 1px solid #000000; text-align: left; padding: 6px 4px; font-size: 0.85rem; vertical-align: top; }
+        th { font-weight: bold; }
+        .loading { font-style: italic; font-size: 0.9rem; margin-bottom: 15px; }
+        tr.history-row { border-bottom: 1px dashed #cccccc; }
+        tr.history-row td { color: #666666; }
+        .radar-live { font-weight: bold; border: 1px solid #000000; padding: 1px 3px; display: inline-block; font-size: 0.75rem; margin-top: 2px; }
+        .radar-est { font-size: 0.8rem; font-style: italic; margin-top: 3px; display: block; }
+        .debug-box { margin-top: 15px; border: 2px dashed #000000; padding: 10px; background-color: #fafafa; display: none; }
+        .debug-table td { font-size: 0.75rem; border-bottom: 1px dotted #999999; }
+        .toggle-btn { background-color: #ffffff; color: #000000; border: 2px dashed #000000; font-size: 0.85rem; margin-top: 30px; }
+    </style>
+</head>
+<body>
+
+    <button onclick="nullstillOgHent()">OPPDATER NÅ</button>
+
+    <h2>AVINOR RUTETIDER & RADAR (TOS)</h2>
+    <div class="tab-menu">
+        <button id="btn-A" class="tab-btn active" onclick="byttRetning('A')" style="width:50%; margin:0;">ANKOMSTER</button>
+        <button id="btn-D" class="tab-btn" onclick="byttRetning('D')" style="width:50%; margin:0;">AVGANGER</button>
+    </div>
+    
+    <div id="statusAvinor" class="loading">Henter data...</div>
+    <table id="tabellAvinor" style="display: none;">
+        <thead>
+            <tr>
+                <th>Tid</th>
+                <th>Fly</th>
+                <th id="sted-kolonne">Fra</th>
+                <th>Gate</th>
+                <th>Live posisjon (Radar)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="dataAvinor"></tbody>
+    </table>
+
+    <button class="toggle-btn" onclick="toggleRadarVisning()">VIS / SKJUL RADAR-RÅDATA</button>
+
+    <div class="debug-box" id="debugBoks">
+        <h3 style="margin-top:0; font-size:1rem; border-bottom:1px solid #000;">FLIGHTRADAR24 INTERNASJONAL RADIUS</h3>
+        <div id="debugStatus" style="font-style:italic; font-size:0.8rem;">Venter på data...</div>
+        <table class="debug-table" id="debugTabell" style="display:none; width:100%;">
+            <thead>
+                <tr>
+                    <th>Flightnr</th>
+                    <th>Callsign</th>
+                    <th>Kjennetegn</th>
+                    <th>Avstand TOS</th>
+                    <th>Høyde/Fart</th>
+                </tr>
+            </thead>
+            <tbody id="debugData"></tbody>
+        </table>
+    </div>
+
+    <div class="meta">
+        Sist oppdatert: <span id="time">-</span><br>
+        Neste automatiske oppdatering om: <span id="teller">30</span>s
+    </div>
+
+    <script>
+        var gjeldendeRetning = 'A';
+        var lagretXmlDoc = null;
+        var radarListe = []; 
+        var brukteRadarFly = {}; 
+        var oppdateringsFrekvensSekunder = 30;
+        var sekunderIgjen = oppdateringsFrekvensSekunder;
+        var tosLat = 69.683;
+        var tosLon = 18.919;
+
+        // gnd=1 inkluderer fly på bakken
+        var radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=78.000,52.000,0.000,32.000%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=1%26air=1%26vehicles=0%26estimated=1";
+
+        function toggleRadarVisning() {
+            var boks = document.getElementById("debugBoks");
+            boks.style.display = (boks.style.display === "none" || boks.style.display === "") ? "block" : "none";
+        }
+
+        function formaterLokalTid(isoStreng) {
+            if (!isoStreng) return "--:--";
+            var dato = new Date(isoStreng);
+            return dato.getHours().toString().padStart(2,'0') + ":" + dato.getMinutes().toString().padStart(2,'0');
+        }
+
+        function byttRetning(retning) {
+            gjeldendeRetning = retning;
+            document.getElementById('btn-D').className = 'tab-btn' + (retning === 'D' ? ' active' : '');
+            document.getElementById('btn-A').className = 'tab-btn' + (retning === 'A' ? ' active' : '');
+            document.getElementById('sted-kolonne').innerText = retning === 'D' ? 'Til' : 'Fra';
+            if (lagretXmlDoc) visKombinertData();
+        }
+
+        function kalkulerAvstand(lat1, lon1, lat2, lon2) {
+            var x = (lon2 - lon1) * Math.cos((lat1 + lat2) / 2 * Math.PI / 180) * 111.32;
+            var y = (lat2 - lat1) * 111.13;
+            return Math.sqrt(x * x + y * y);
+        }
+
+        function hentRadarTos() {
+            radarListe = []; 
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", radarUrl + "%26_=" + new Date().getTime(), true);
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    var data = JSON.parse(xhr.responseText);
+                    for (var nøkkel in data) {
+                        if (nøkkel !== "full_count" && nøkkel !== "version" && nøkkel !== "stats") {
+                            var f = data[nøkkel];
+                            var avst = kalkulerAvstand(tosLat, tosLon, f[1], f[2]);
+                            radarListe.push({
+                                id: nøkkel,
+                                høyde: f[4] === 0 ? "Bakken" : f[4] + " ft",
+                                fartNum: f[5],
+                                avstand: avst,
+                                rutenummer: (f[13] || "").replace(/\s+/g, '').toUpperCase(),
+                                callsign: (f[16] || "").replace(/\s+/g, '').toUpperCase()
+                            });
+                        }
+                    }
+                    hentAvinorData();
+                }
+            };
+            xhr.send();
+        }
+
+        function hentAvinorData() {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", "flydata.xml?cachebuster=" + new Date().getTime(), true);
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    lagretXmlDoc = new DOMParser().parseFromString(xhr.responseText, "application/xml");
+                    visKombinertData();
+                }
+            };
+            xhr.send();
+        }
+
+        function finnRadarMatch(avinorFlynr) {
+            var id = avinorFlynr.replace(/\s+/g, '').toUpperCase().trim();
+            for (var i = 0; i < radarListe.length; i++) {
+                var r = radarListe[i];
+                if (brukteRadarFly[r.id]) continue;
+                if (r.rutenummer === id || r.callsign === id.replace("SK", "SAS").replace("WF", "WIF").replace("DY", "NAX")) {
+                    brukteRadarFly[r.id] = true;
+                    return r;
+                }
+            }
+            return null;
+        }
+
+        function visKombinertData() {
+            var flights = Array.from(lagretXmlDoc.getElementsByTagName("flight")).sort((a,b) => new Date(a.getElementsByTagName("schedule_time")[0].textContent) - new Date(b.getElementsByTagName("schedule_time")[0].textContent));
+            var nuhue = new Date();
+            var html = "";
+            brukteRadarFly = {};
+
+            flights.forEach(f => {
+                if (f.getElementsByTagName("arr_dep")[0].textContent !== gjeldendeRetning) return;
+                var tidRaw = f.getElementsByTagName("schedule_time")[0].textContent;
+                var flynr = f.getElementsByTagName("flight_id")[0].textContent;
+                var rData = finnRadarMatch(flynr);
+                var est = "";
+
+                if (rData && gjeldendeRetning === 'A' && rData.fartNum > 30) {
+                    var minutter = Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60) + 3;
+                    var tid = new Date(nuhue.getTime() + minutter * 60000);
+                    est = "<span class='radar-est'>→ FR24: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
+                }
+
+                var statusNode = f.getElementsByTagName("status")[0];
+                var status = (new Date(tidRaw) < nuhue) ? (gjeldendeRetning === 'A' ? "Landet" : "Gått") : "I rute";
+                if(statusNode) status = statusNode.getAttribute("code") === "E" ? "Ny tid: " + formaterLokalTid(statusNode.getAttribute("time")) : status;
+
+                html += "<tr><td><strong>" + formaterLokalTid(tidRaw) + "</strong></td><td>" + flynr + "</td><td>" + f.getElementsByTagName("airport")[0].textContent + "</td><td>" + (f.getElementsByTagName("gate")[0]?.textContent || "-") + "</td><td>" + (rData ? "<span class='radar-live'>LIVE</span> " + rData.høyde : "-") + "</td><td>" + status + est + "</td></tr>";
+            });
+
+            document.getElementById("dataAvinor").innerHTML = html;
+            document.getElementById("tabellAvinor").style.display = "table";
+            document.getElementById("statusAvinor").style.display = "none";
+        }
+
+        function nullstillOgHent() { sekunderIgjen = oppdateringsFrekvensSekunder; hentRadarTos(); }
+        setInterval(() => { sekunderIgjen--; if(sekunderIgjen <= 0) { sekunderIgjen = oppdateringsFrekvensSekunder; hentRadarTos(); } document.getElementById("teller").innerText = sekunderIgjen; }, 1000);
+        hentRadarTos();
+    </script>
+</body>
+</html>
