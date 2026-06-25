@@ -139,7 +139,9 @@
             tos: {
                 lat: 69.683,
                 lon: 18.919,
-                url: "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=69.960,69.400,18.150,19.680%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=0%26air=1%26vehicles=0%26estimated=1"
+                // UTVIDET RADIUS: bounds format er Nord, Sør, Vest, Øst. 
+                // Økt fra ~30km til en solid boks som dekker store deler av Troms og innflyvninger.
+                url: "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=70.500,68.800,17.000,21.000%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=0%26air=1%26vehicles=0%26estimated=1"
             }
         };
 
@@ -179,7 +181,7 @@
             return "?";
         }
 
-        // Henter Flightradar24-data for Tromsø
+        // Henter Flightradar24-data for Tromsø med stor radius
         function hentRadarTos() {
             liveRadarTos = {}; 
             var xhr = new XMLHttpRequest();
@@ -194,9 +196,10 @@
                             for (var nøkkel in data) {
                                 if (data.hasOwnProperty(nøkkel) && nøkkel !== "full_count" && nøkkel !== "version" && nøkkel !== "stats") {
                                     var flyinfo = data[nøkkel];
+                                    // Flightradar lagrer ofte flynummer i indeks 13 (rute) eller 16 (callsign)
                                     var flynr = flyinfo[13] || flyinfo[16] || "";
                                     if (flynr !== "") {
-                                        var renId = flynr.replace(/\s+/g, '').toUpperCase();
+                                        var renId = flynr.replace(/\s+/g, '').toUpperCase().trim();
                                         liveRadarTos[renId] = {
                                             høyde: flyinfo[4] + " ft",
                                             fart: flyinfo[5] + " kt",
@@ -277,7 +280,7 @@
                 if (timeDiff < -3 || timeDiff > 8) continue;
 
                 var flynr = flight.getElementsByTagName("flight_id")[0]?.textContent || "-";
-                var renFlyId = flynr.replace(/\s+/g, '').toUpperCase();
+                var renFlyId = flynr.replace(/\s+/g, '').toUpperCase().trim();
                 
                 var radarTekst = "-";
                 if (liveRadarTos[renFlyId]) {
