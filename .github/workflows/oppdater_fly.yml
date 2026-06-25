@@ -3,7 +3,7 @@ name: Hent data fra Avinor
 on:
   schedule:
     - cron: '*/5 * * * *' # Kjører automatisk hvert 5. minutt
-  workflow_dispatch: # Gjør at vi kan starte den manuelt
+  workflow_dispatch: # Gjør at vi kan starte den manuelt når som helst
 
 jobs:
   download:
@@ -14,12 +14,12 @@ jobs:
 
     - name: Last ned XML fra Avinor
       run: |
-        curl -s "https://asrv.avinor.no/XmlFeed/v1.0?TimeFrom=1&TimeTo=6&airport=TOS" -o flydata.xml
+        curl -s "https://asrv.avinor.no/XmlFeed/v1.0?TimeFrom=-2&TimeTo=6&airport=TOS" -o flydata.xml
 
     - name: Lagre filen i repositoriet
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
         git add flydata.xml
-        git commit -m "Oppdatert flydata fra Avinor" || exit 0
+        git commit -m "Oppdatert flydata fra Avinor (inkludert historikk)" || exit 0
         git push
