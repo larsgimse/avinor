@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tromsø Flyplass & Flyradar</title>
+    <title>Tromsø Flyplass & Flyradar (Med Radar-Inspektør)</title>
     <style>
         /* E-ink optimalisert stil: Kun sort/hvitt og høy kontrast */
         body {
@@ -96,6 +96,17 @@
             font-size: 0.75rem;
             margin-top: 2px;
         }
+        /* Stil for inspektøren i bunnen */
+        .debug-box {
+            margin-top: 30px;
+            border: 2px dashed #000000;
+            padding: 10px;
+            background-color: #fafafa;
+        }
+        .debug-table td {
+            font-size: 0.75rem;
+            border-bottom: 1px dotted #999999;
+        }
     </style>
 </head>
 <body>
@@ -123,6 +134,22 @@
         <tbody id="dataAvinor"></tbody>
     </table>
 
+    <div class="debug-box">
+        <h3 style="margin-top:0; font-size:1rem; border-bottom:1px solid #000;">FLIGHTRADAR24 RÅDATA AKKURAT NÅ</h3>
+        <div id="debugStatus" style="font-style:italic; font-size:0.8rem;">Venter på data...</div>
+        <table class="debug-table" id="debugTabell" style="display:none; width:100%;">
+            <thead>
+                <tr>
+                    <th>Flightnr</th>
+                    <th>Callsign</th>
+                    <th>Reg (Kjennetegn)</th>
+                    <th>Høyde/Fart</th>
+                </tr>
+            </thead>
+            <tbody id="debugData"></tbody>
+        </table>
+    </div>
+
     <div class="meta">
         Sist oppdatert: <span id="time">-</span><br>
         Neste automatiske oppdatering om: <span id="teller">30</span>s
@@ -131,7 +158,7 @@
     <script>
         var gjeldendeRetning = 'D';
         var lagretXmlDoc = null;
-        var radarListe = []; // Vi lagrer nå flyene som en liste i stedet for objekt-nøkler
+        var radarListe = []; 
         var brukteRadarFly = {}; 
         var oppdateringsFrekvensSekunder = 30;
         var sekunderIgjen = oppdateringsFrekvensSekunder;
@@ -188,31 +215,65 @@
             
             xhr.onreadystatechange = function () {
                 if (xhr.readyState === 4) {
+                    var debugStatusEl = document.getElementById("debugStatus");
+                    var debugTabellEl = document.getElementById("debugTabell");
+                    var debugDataEl = document.getElementById("debugData");
+                    
                     if (xhr.status === 200) {
                         try {
                             var data = JSON.parse(xhr.responseText);
+                            var debugHtml = "";
+                            var raderFunnet = 0;
+
                             for (var nøkkel in data) {
                                 if (data.hasOwnProperty(nøkkel) && nøkkel !== "full_count" && nøkkel !== "version" && nøkkel !== "stats") {
                                     var flyinfo = data[nøkkel];
                                     
-                                    // Flightradar24 rådata-struktur:
-                                    // flyinfo[13] = Rutenummer (f.eks "SK4406")
-                                    // flyinfo[16] = Callsign (f.eks "WIF2J" eller "SAS44G")
-                                    // flyinfo[9]  = Kjennetegn/Reg (f.eks "LN-WSB")
-                                    radarListe.push({
+                                    var ruteRaw = flyinfo[13] || "";
+                                    var callsignRaw = flyinfo[16] || "";
+                                    var regRaw = flyinfo[9] || "";
+
+                                    var flyObj = {
                                         id: nøkkel,
                                         høyde: flyinfo[4] + " ft",
                                         fart: flyinfo[5] + " kt",
                                         retning: flyinfo[3],
                                         lat: flyinfo[1],
                                         lon: flyinfo[2],
-                                        rutenummer: (flyinfo[13] || "").replace(/\s+/g, '').toUpperCase(),
-                                        callsign: (flyinfo[16] || "").replace(/\s+/g, '').toUpperCase(),
-                                        reg: (flyinfo[9] || "").replace(/[^A-Z0-9]/g, '').toUpperCase() // f.eks LNWSB
-                                    });
+                                        rutenummer: ruteRaw.replace(/\s+/g, '').toUpperCase(),
+                                        callsign: callsignRaw.replace(/\s+/g, '').toUpperCase(),
+                                        reg: regRaw.replace(/[^A-Z0-9\-]/g, '').toUpperCase() 
+                                    };
+
+                                    radarListe.push(flyObj);
+                                    raderFunnet++;
+
+                                    // Bygg linje til inspektøren i bunnen
+                                    debugHtml += "<tr>" +
+                                        "<td>" + (ruteRaw || "<em style='color:#999;'>Mangler</em>") + "</td>" +
+                                        "<td>" + (callsignRaw || "<em style='color:#999;'>Mangler</em>") + "</td>" +
+                                        "<td>" + (regRaw || "<em style='color:#999;'>Mangler</em>") + "</td>" +
+                                        "<td>" + flyObj.høyde + " / " + flyObj.fart + "</td>" +
+                                        "</tr>";
                                 }
                             }
-                        } catch (e) {}
+
+                            if (raderFunnet === 0) {
+                                debugStatusEl.innerText = "Tilkobling OK, men ingen fly befinner seg innenfor radaren akkurat nå.";
+                                debugTabellEl.style.display = "none";
+                            } else {
+                                debugStatusEl.style.display = "none";
+                                debugTabellEl.style.display = "table";
+                                debugDataEl.innerHTML = debugHtml;
+                            }
+
+                        } catch (e) {
+                            debugStatusEl.innerText = "Kunne ikke tolke data fra Flightradar24.";
+                            debugTabellEl.style.display = "none";
+                        }
+                    } else {
+                        debugStatusEl.innerText = "Feil ved henting fra radar (Statuskode: " + xhr.status + "). Sjekk om proxy er nede.";
+                        debugTabellEl.style.display = "none";
                     }
                     hentAvinorData();
                 }
@@ -244,15 +305,11 @@
             xhr.send();
         }
 
-        // Tredelt krysstjekk-funksjon for å finne det nøyaktige flyet
         function finnRadarMatch(avinorFlynr) {
             var avinorId = avinorFlynr.replace(/\s+/g, '').toUpperCase().trim();
             if (avinorId === "" || avinorId === "-") return null;
 
-            // Hent kun siffer fra Avinor-nummeret (f.eks "WF904" -> "904")
             var avinorTall = avinorId.replace(/\D/g, ""); 
-            
-            // Definer flyselskap-variasjoner
             var erWideroe = avinorId.startsWith("WF");
             var erSAS = avinorId.startsWith("SK");
             var erNorwegian = avinorId.startsWith("DY");
@@ -260,16 +317,13 @@
             for (var i = 0; i < radarListe.length; i++) {
                 var fly = radarListe[i];
 
-                // Hvis dette spesifikke live-flyet allerede er tegnet på skjermen, hopp over
                 if (brukteRadarFly[fly.id]) continue;
 
-                // SJEKK 1: Direkte match på rutenummer registrert av Flightradar
                 if (fly.rutenummer === avinorId) {
                     brukteRadarFly[fly.id] = true;
                     return fly;
                 }
 
-                // SJEKK 2: Match på konvertert rutenummer (SK -> SAS, WF -> WIF, DY -> NAX)
                 var konvertertId = avinorId;
                 if (erSAS) konvertertId = avinorId.replace("SK", "SAS");
                 if (erWideroe) konvertertId = avinorId.replace("WF", "WIF");
@@ -280,20 +334,17 @@
                     return fly;
                 }
 
-                // SJEKK 3: Hvis det er et komplekst callsign (som WIF2J for rute WF904), 
-                // sjekker vi om Flightradar sitt "skjulte" rutenummer matcher tallene, 
-                // ELLER om callsignet starter på riktig selskapskode og inneholder samme rutenummer-tall.
                 if (avinorTall.length > 0) {
                     var matchPåSelskapOgTall = false;
                     
                     if (erWideroe && (fly.callsign.startsWith("WIF") || fly.rutenummer.startsWith("WIF") || fly.rutenummer.startsWith("WF"))) {
-                        if (fly.rutenummer.includes(avinorTall)) matchPåSelskapOgTall = true;
+                        if (fly.rutenummer.includes(avinorTall) || fly.callsign.includes(avinorTall)) matchPåSelskapOgTall = true;
                     }
                     if (erSAS && (fly.callsign.startsWith("SAS") || fly.rutenummer.startsWith("SAS") || fly.rutenummer.startsWith("SK"))) {
-                        if (fly.rutenummer.includes(avinorTall)) matchPåSelskapOgTall = true;
+                        if (fly.rutenummer.includes(avinorTall) || fly.callsign.includes(avinorTall)) matchPåSelskapOgTall = true;
                     }
                     if (erNorwegian && (fly.callsign.startsWith("NAX") || fly.rutenummer.startsWith("NAX") || fly.rutenummer.startsWith("DY"))) {
-                        if (fly.rutenummer.includes(avinorTall)) matchPåSelskapOgTall = true;
+                        if (fly.rutenummer.includes(avinorTall) || fly.callsign.includes(avinorTall)) matchPåSelskapOgTall = true;
                     }
 
                     if (matchPåSelskapOgTall) {
@@ -310,7 +361,7 @@
             var tabellEl = document.getElementById("tabellAvinor");
             var dataBoks = document.getElementById("dataAvinor");
             
-            brukteRadarFly = {}; // Nullstill låste fly for denne oppdateringen
+            brukteRadarFly = {}; 
 
             var flightsNodes = lagretXmlDoc.getElementsByTagName("flight");
             var nuhue = new Date();
@@ -350,8 +401,6 @@
                 if (rData) {
                     var pil = hentRetningsPil(rData.retning);
                     var avst = kalkulerAvstand(69.683, 18.919, rData.lat, rData.lon);
-                    
-                    // Viser "LIVE", Høyde / Fart, samt retning, avstand og flyets registrering i parentes
                     var regInfo = rData.reg ? " (" + rData.reg + ")" : "";
                     radarTekst = "<span class='radar-live'>LIVE</span> " + rData.høyde + " / " + rData.fart + "<br>" + pil + " " + avst.toFixed(1) + " km" + regInfo;
                 }
