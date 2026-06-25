@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tromsø Flyplass & Flyradar (Utvidet Radius)</title>
+    <title>Tromsø Flyplass & Flyradar (Fullstendig Liste)</title>
     <style>
         /* E-ink optimalisert stil: Kun sort/hvitt og høy kontrast */
         body {
@@ -163,7 +163,6 @@
         var oppdateringsFrekvensSekunder = 30;
         var sekunderIgjen = oppdateringsFrekvensSekunder;
 
-        // Tromsø koordinater som sentrum
         var tosLat = 69.683;
         var tosLon = 18.919;
 
@@ -171,8 +170,7 @@
             tos: {
                 lat: tosLat,
                 lon: tosLon,
-                // KRAFTIG UTVIDET BOUNDS: Dekker nå ca. Nordland, Troms og deler av Finnmark
-                // Nord: 71.50, Sør: 67.00, Vest: 12.00, Øst: 24.00
+                // Stor radius: Nord: 71.50, Sør: 67.00, Vest: 12.00, Øst: 24.00
                 url: "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=71.500,67.000,12.000,24.000%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=0%26air=1%26vehicles=0%26estimated=1"
             }
         };
@@ -270,7 +268,7 @@
                             }
 
                             if (raderFunnet === 0) {
-                                debugStatusEl.innerText = "Ingen fly funnet innenfor den store radiusen.";
+                                debugStatusEl.innerText = "Ingen fly funnet på radar akkurat nå.";
                                 debugTabellEl.style.display = "none";
                             } else {
                                 debugStatusEl.style.display = "none";
@@ -389,7 +387,7 @@
             });
 
             for (var i = 0; i < flightsArray.length; i++) {
-                if (antallVisninger >= 7) break;
+                // Sperren på max 7 rader er nå fjernet helt herfra!
 
                 var flight = flightsArray[i];
                 if (flight.getElementsByTagName("arr_dep")[0]?.textContent !== gjeldendeRetning) continue;
