@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tromsø Flyplass & Flyradar (Nook Kompatibel)</title>
+    <title>Tromsø Flyplass & Flyradar (Diagnosemodus)</title>
     <style>
-        /* E-ink optimalisert stil: Kun sort/hvitt og høy kontrast */
         body {
             font-family: monospace, sans-serif;
             background-color: #ffffff;
@@ -139,7 +138,8 @@
             tos: {
                 lat: 69.683,
                 lon: 18.919,
-                url: "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=70.500,68.800,17.000,21.000%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=0%26air=1%26vehicles=0%26estimated=1"
+                // Ekstra stor boks for å fange opp alt
+                url: "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=70.600,68.600,16.500,21.500%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=0%26air=1%26vehicles=0%26estimated=1"
             }
         };
 
@@ -190,20 +190,28 @@
                     if (xhr.status === 200) {
                         try {
                             var data = JSON.parse(xhr.responseText);
+                            console.log("--- FLIGHTRADAR24 RÅDATA SOM BLE FUNNET AKKURAT NÅ ---");
+                            
                             for (var nøkkel in data) {
                                 if (data.hasOwnProperty(nøkkel) && nøkkel !== "full_count" && nøkkel !== "version" && nøkkel !== "stats") {
                                     var flyinfo = data[nøkkel];
                                     var rute = flyinfo[13] || "";
                                     var callsign = flyinfo[16] || "";
+                                    var reg = flyinfo[9] || "";
                                     
-                                    // Lagre under begge mulige ID-navn for å sikre treff
                                     var radarObj = {
                                         høyde: flyinfo[4] + " ft",
                                         fart: flyinfo[5] + " kt",
                                         retning: flyinfo[3],
                                         lat: flyinfo[1],
-                                        lon: flyinfo[2]
+                                        lon: flyinfo[2],
+                                        rute: rute,
+                                        callsign: callsign,
+                                        reg: reg
                                     };
+
+                                    // Logg detaljer til nettleserkonsollen for feilsøking
+                                    console.log("Fly funnet på radar -> Rute: '" + rute + "', Callsign: '" + callsign + "', Reg: '" + reg + "'");
 
                                     if (rute !== "") {
                                         liveRadarTos[rute.replace(/\s+/g, '').toUpperCase().trim()] = radarObj;
@@ -211,9 +219,15 @@
                                     if (callsign !== "") {
                                         liveRadarTos[callsign.replace(/\s+/g, '').toUpperCase().trim()] = radarObj;
                                     }
+                                    if (reg !== "") {
+                                        liveRadarTos[reg.replace(/\s+/g, '').toUpperCase().trim()] = radarObj;
+                                    }
                                 }
                             }
-                        } catch (e) {}
+                            console.log("-------------------------------------------------------");
+                        } catch (e) {
+                            console.log("Feil ved lesing av radar-JSON:", e);
+                        }
                     }
                     hentAvinorData();
                 }
@@ -245,27 +259,33 @@
             xhr.send();
         }
 
-        // Funksjon for å finne en match i radar-objektet selv om selskapskodene varierer
+        // Forbedret matching-algoritme som gjør alt den kan for å parre
         function finnRadarMatch(avinorFlynr) {
-            var renId = avinorFlynr.replace(/\s+/g, '').toUpperCase().trim();
+            var renAvinorId = avinorFlynr.replace(/\s+/g, '').toUpperCase().trim();
+            if (renAvinorId === "" || renAvinorId === "-") return null;
             
-            // 1. Sjekk direkte treff (f.eks SK4406 == SK4406)
-            if (liveRadarTos[renId]) return liveRadarTos[renId];
+            // 1. Direkte sjekk
+            if (liveRadarTos[renAvinorId]) return liveRadarTos[renAvinorId];
             
-            // 2. Oversett vanlige flyselskaper (SK -> SAS, WF -> WIF, DY -> NAX)
-            var alternativId = renId;
-            if (renId.startsWith("SK")) alternativId = renId.replace("SK", "SAS");
-            else if (renId.startsWith("WF")) alternativId = renId.replace("WF", "WIF");
-            else if (renId.startsWith("DY")) alternativId = renId.replace("DY", "NAX");
+            // 2. Prefiks-bytte (SK <-> SAS, WF <-> WIF, DY <-> NAX)
+            var altId = renAvinorId;
+            if (renAvinorId.startsWith("SK")) altId = renAvinorId.replace("SK", "SAS");
+            else if (renAvinorId.startsWith("SAS")) altId = renAvinorId.replace("SAS", "SK");
+            else if (renAvinorId.startsWith("WF")) altId = renAvinorId.replace("WF", "WIF");
+            else if (renAvinorId.startsWith("WIF")) altId = renAvinorId.replace("WIF", "WF");
+            else if (renAvinorId.startsWith("DY")) altId = renAvinorId.replace("DY", "NAX");
+            else if (renAvinorId.startsWith("NAX")) altId = renAvinorId.replace("NAX", "DY");
             
-            if (liveRadarTos[alternativId]) return liveRadarTos[alternativId];
+            if (liveRadarTos[altId]) return liveRadarTos[altId];
             
-            // 3. Siste utvei: Sjekk om bare tallene i rutenummeret matcher noe på radaren
-            var kunTall = renId.replace(/\D/g, "");
-            if (kunTall.length > 0) {
-                for (var radarId in liveRadarTos) {
-                    if (radarId.endsWith(kunTall)) {
-                        return liveRadarTos[radarId];
+            // 3. AGGRESSIV TALLSJEKK: Ekstraher kun siffer (f.eks SK4406 -> "4406")
+            var avinorTall = renAvinorId.replace(/\D/g, "");
+            if (avinorTall.length > 0) {
+                for (var radarNøkkel in liveRadarTos) {
+                    var radarTall = radarNøkkel.replace(/\D/g, "");
+                    // Hvis rutenummer-tallene er helt like, eller slutter på det samme
+                    if (radarTall === avinorTall || radarNøkkel.endsWith(avinorTall) || renAvinorId.endsWith(radarTall)) {
+                        return liveRadarTos[radarNøkkel];
                     }
                 }
             }
@@ -310,7 +330,6 @@
 
                 var flynr = flight.getElementsByTagName("flight_id")[0]?.textContent || "-";
                 
-                // BRUKER DEN NYE MATCHING-FUNKSJONEN HER:
                 var radarTekst = "-";
                 var rData = finnRadarMatch(flynr);
                 
