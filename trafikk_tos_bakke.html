@@ -41,8 +41,7 @@
             <tr>
                 <th>Tid</th>
                 <th>Fly</th>
-                <th id="sted-kolonne">Fra</th>
-                <th>Gate</th>
+                <th id="sted-kolonne">Fra</th> <th>Gate</th>
                 <th>Live posisjon (Radar)</th>
                 <th>Status</th>
             </tr>
@@ -81,10 +80,11 @@
         var brukteRadarFly = {}; 
         var oppdateringsFrekvensSekunder = 30;
         var sekunderIgjen = oppdateringsFrekvensSekunder;
+
         var tosLat = 69.683;
         var tosLon = 18.919;
 
-        // gnd=1 inkluderer fly på bakken
+        // gnd=1 inkludert for å fange bakkefly
         var radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=78.000,52.000,0.000,32.000%26faa=1%26flight_states=1%26satellite=1%26mlat=1%26flarm=1%26adsb=1%26gnd=1%26air=1%26vehicles=0%26estimated=1";
 
         function toggleRadarVisning() {
@@ -95,7 +95,9 @@
         function formaterLokalTid(isoStreng) {
             if (!isoStreng) return "--:--";
             var dato = new Date(isoStreng);
-            return dato.getHours().toString().padStart(2,'0') + ":" + dato.getMinutes().toString().padStart(2,'0');
+            var t = dato.getHours();
+            var m = dato.getMinutes();
+            return (t < 10 ? "0" + t : t) + ":" + (m < 10 ? "0" + m : m);
         }
 
         function byttRetning(retning) {
@@ -112,27 +114,51 @@
             return Math.sqrt(x * x + y * y);
         }
 
+        function hentRetningsPil(grader) {
+            if (grader === undefined || grader === null) return "?";
+            var g = grader % 360;
+            if (g >= 337.5 || g < 22.5) return "↑";
+            if (g >= 22.5  && g < 67.5)  return "↗";
+            if (g >= 67.5  && g < 112.5) return "→";
+            if (g >= 112.5 && g < 157.5) return "↘";
+            if (g >= 157.5 && g < 202.5) return "↓";
+            if (g >= 202.5 && g < 247.5) return "↙";
+            if (g >= 247.5 && g < 292.5) return "←";
+            if (g >= 292.5 && g < 337.5) return "↖";
+            return "?";
+        }
+
         function hentRadarTos() {
             radarListe = []; 
             var xhr = new XMLHttpRequest();
             xhr.open("GET", radarUrl + "%26_=" + new Date().getTime(), true);
+            
             xhr.onreadystatechange = function () {
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     var data = JSON.parse(xhr.responseText);
+                    var debugHtml = "";
                     for (var nøkkel in data) {
                         if (nøkkel !== "full_count" && nøkkel !== "version" && nøkkel !== "stats") {
                             var f = data[nøkkel];
                             var avst = kalkulerAvstand(tosLat, tosLon, f[1], f[2]);
-                            radarListe.push({
+                            var erBakken = f[4] === 0;
+                            var flyObj = {
                                 id: nøkkel,
-                                høyde: f[4] === 0 ? "Bakken" : f[4] + " ft",
+                                høyde: erBakken ? "Bakken" : f[4] + " ft",
+                                fart: f[5] + " kt",
                                 fartNum: f[5],
+                                retning: f[3],
                                 avstand: avst,
                                 rutenummer: (f[13] || "").replace(/\s+/g, '').toUpperCase(),
-                                callsign: (f[16] || "").replace(/\s+/g, '').toUpperCase()
-                            });
+                                callsign: (f[16] || "").replace(/\s+/g, '').toUpperCase(),
+                                reg: (f[9] || "")
+                            };
+                            radarListe.push(flyObj);
+                            debugHtml += "<tr><td>" + flyObj.rutenummer + "</td><td>" + flyObj.callsign + "</td><td>" + flyObj.reg + "</td><td>" + avst.toFixed(0) + " km</td><td>" + flyObj.høyde + "</td></tr>";
                         }
                     }
+                    document.getElementById("debugData").innerHTML = debugHtml;
+                    document.getElementById("debugTabell").style.display = "table";
                     hentAvinorData();
                 }
             };
@@ -175,19 +201,18 @@
                 var tidRaw = f.getElementsByTagName("schedule_time")[0].textContent;
                 var flynr = f.getElementsByTagName("flight_id")[0].textContent;
                 var rData = finnRadarMatch(flynr);
-                var est = "";
+                var radarTekst = "-";
+                var status = (new Date(tidRaw) < nuhue) ? (gjeldendeRetning === 'A' ? "Landet" : "Gått") : "I rute";
 
-                if (rData && gjeldendeRetning === 'A' && rData.fartNum > 30) {
-                    var minutter = Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60) + 3;
-                    var tid = new Date(nuhue.getTime() + minutter * 60000);
-                    est = "<span class='radar-est'>→ FR24: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
+                if (rData) {
+                    radarTekst = "<span class='radar-live'>LIVE</span> " + rData.høyde + " / " + rData.fart + "<br>" + hentRetningsPil(rData.retning) + " " + rData.avstand.toFixed(1) + " km";
+                    if (gjeldendeRetning === 'A' && rData.fartNum > 30) {
+                        var tid = new Date(nuhue.getTime() + (Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60) + 3) * 60000);
+                        status += "<span class='radar-est'>→ FR24: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
+                    }
                 }
 
-                var statusNode = f.getElementsByTagName("status")[0];
-                var status = (new Date(tidRaw) < nuhue) ? (gjeldendeRetning === 'A' ? "Landet" : "Gått") : "I rute";
-                if(statusNode) status = statusNode.getAttribute("code") === "E" ? "Ny tid: " + formaterLokalTid(statusNode.getAttribute("time")) : status;
-
-                html += "<tr><td><strong>" + formaterLokalTid(tidRaw) + "</strong></td><td>" + flynr + "</td><td>" + f.getElementsByTagName("airport")[0].textContent + "</td><td>" + (f.getElementsByTagName("gate")[0]?.textContent || "-") + "</td><td>" + (rData ? "<span class='radar-live'>LIVE</span> " + rData.høyde : "-") + "</td><td>" + status + est + "</td></tr>";
+                html += "<tr><td><strong>" + formaterLokalTid(tidRaw) + "</strong></td><td>" + flynr + "</td><td><strong>" + f.getElementsByTagName("airport")[0].textContent + "</strong></td><td>" + (f.getElementsByTagName("gate")[0]?.textContent || "-") + "</td><td>" + radarTekst + "</td><td>" + status + "</td></tr>";
             });
 
             document.getElementById("dataAvinor").innerHTML = html;
@@ -195,8 +220,8 @@
             document.getElementById("statusAvinor").style.display = "none";
         }
 
-        function nullstillOgHent() { sekunderIgjen = oppdateringsFrekvensSekunder; hentRadarTos(); }
-        setInterval(() => { sekunderIgjen--; if(sekunderIgjen <= 0) { sekunderIgjen = oppdateringsFrekvensSekunder; hentRadarTos(); } document.getElementById("teller").innerText = sekunderIgjen; }, 1000);
+        function nullstillOgHent() { hentRadarTos(); }
+        setInterval(() => { hentRadarTos(); }, 30000);
         hentRadarTos();
     </script>
 </body>
