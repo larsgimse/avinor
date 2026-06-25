@@ -2,7 +2,7 @@ name: Hent data fra Avinor
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Kjører automatisk hvert 5. minutt
+    - cron: '*/15 * * * *' # Kjører automatisk hvert 15. minutt
   workflow_dispatch: # Gjør at vi kan starte den manuelt når som helst
 
 jobs:
