@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <title>Live Flyradar</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #111; transition: background 0.3s; }
+        #map { height: 100vh; width: 100vw; }
+        
+        .ui-panel {
+            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(255,255,255,0.9); padding: 12px 20px; 
+            border-radius: 50px; display: flex; align-items: center; gap: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-family: sans-serif;
+        }
+        .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 22px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #ff9800; }
+        input:checked + .slider:before { transform: translateX(22px); }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <label class="switch">
+            <input type="checkbox" id="themeSwitch" onclick="toggleTheme()">
+            <span class="slider"></span>
+        </label>
+        <span id="label">Lyst tema</span>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
+        const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+        const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        
+        const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
+        map.getPanes().overlayPane.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        
+        let isDark = false;
+        let allFlights = {};
+
+        function toggleTheme() {
+            isDark = document.getElementById('themeSwitch').checked;
+            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
+            if (isDark) { map.removeLayer(light); dark.addTo(map); }
+            else { map.removeLayer(dark); light.addTo(map); }
+        }
+
+        function updateCanvas() {
+            canvas.width = map.getSize().x;
+            canvas.height = map.getSize().y;
+        }
+
+        async function fetchFlights() {
+            const b = map.getBounds();
+            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                for (let id in data) {
+                    if (id !== "full_count" && id !== "version" && id !== "stats") {
+                        allFlights[id] = { lat: data[id][1], lon: data[id][2] };
+                    }
+                }
+            } catch(e) {}
+        }
+
+        function draw() {
+            // Fade-effekt (hvis bakgrunnen er veldig mørk/lys)
+            ctx.fillStyle = isDark ? "rgba(17,17,17,0.08)" : "rgba(248,249,250,0.08)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Orange glød
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = "#ff9800";
+            ctx.fillStyle = "#ffffff"; // Selve prikken er hvit for kontrast
+
+            for (let id in allFlights) {
+                const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+            requestAnimationFrame(draw);
+        }
+
+        map.on('move', updateCanvas);
+        map.on('zoom', updateCanvas);
+        map.on('moveend', fetchFlights);
+        
+        updateCanvas();
+        fetchFlights();
+        draw();
+    </script>
+</body>
+</html>
