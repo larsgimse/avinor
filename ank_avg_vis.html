@@ -2,78 +2,79 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tromsø Info</title>
+    <title>Tromsø Flyplass & Radar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; background-color: #ffffff; color: #000000; padding: 5px; margin: 0; }
-        .tab-menu { display: flex; width: 100%; border: 2px solid #000; }
-        .tab-btn { flex: 1; border: none; padding: 10px; font-weight: bold; cursor: pointer; background: #fff; }
+        body { font-family: monospace; background: #fff; color: #000; padding: 5px; margin: 0; }
+        .tab-menu { display: flex; width: 100%; border: 2px solid #000; margin-bottom: 10px; }
+        .tab-btn { flex: 1; border: none; padding: 10px; font-weight: bold; cursor: pointer; background: #fff; font-family: monospace; }
         .tab-btn.active { background: #000; color: #fff; }
-        .content-section { display: none; }
-        .content-section.active { display: block; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #000; text-align: left; padding: 4px; font-size: 0.8rem; }
-        #map { height: 60vh; width: 100%; border: 2px solid #000; margin-top: 10px; }
-        .meta { font-size: 0.7rem; margin-top: 10px; border-top: 1px solid #000; }
+        .view { display: none; }
+        .view.active { display: block; }
+        table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+        th, td { border-bottom: 1px solid #000; text-align: left; padding: 5px; font-size: 0.8rem; }
+        #map { height: 400px; width: 100%; border: 2px solid #000; margin-top: 5px; }
+        .counter { font-size: 0.8rem; margin: 5px 0; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="tab-menu">
-        <button class="tab-btn active" onclick="visFane('rutetid')">RUTETIDER</button>
-        <button class="tab-btn" onclick="visFane('kart')">KART</button>
+        <button id="btn-rutetid" class="tab-btn active" onclick="byttFane('rutetid')">RUTETID</button>
+        <button id="btn-kart" class="tab-btn" onclick="byttFane('kart')">RADAR-KART</button>
     </div>
 
-    <div id="rutetid" class="content-section active">
-        <button onclick="nullstillOgHent()" style="width:100%; padding:10px; border:2px solid #000; background:#fff; font-weight:bold;">OPPDATER DATA</button>
+    <div id="rutetid" class="view active">
+        <button onclick="nullstillOgHent()" style="width:100%; padding:10px; border:2px solid #000; background:#fff; font-weight:bold;">OPPDATER RUTETIDER</button>
         <table id="tabellAvinor">
-            <thead><tr><th>Tid</th><th>Fly</th><th>Fra/Til</th><th>Status</th></tr></thead>
+            <thead><tr><th>Tid</th><th>Fly</th><th>Sted</th><th>Status</th></tr></thead>
             <tbody id="dataAvinor"></tbody>
         </table>
     </div>
 
-    <div id="kart" class="content-section">
+    <div id="kart" class="view">
+        <div id="counter" class="counter">Fly synlige: 0</div>
         <div id="map"></div>
-        <div id="counter" style="font-size:0.8rem; margin-top:5px;">Fly synlige: 0</div>
     </div>
-
-    <div class="meta">Sist oppdatert: <span id="time">-</span></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // --- Kartlogikk ---
-        const map = L.map('map', { zoomControl: false }).setView([69.65, 18.95], 9);
+        // --- Felles variabler ---
+        var lagretXmlDoc = null;
+        var radarListe = [];
+        
+        // --- Kart Logikk ---
+        const map = L.map('map', { zoomControl: false }).setView([69.65, 18.95], 7);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
         const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated');
         map.getPanes().overlayPane.appendChild(canvas);
         const ctx = canvas.getContext('2d');
         let flights = {};
 
-        function visFane(fane) {
-            document.querySelectorAll('.content-section').forEach(s => s.classList.remove('active'));
+        function byttFane(fane) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById(fane).classList.add('active');
-            event.target.classList.add('active');
+            document.getElementById('btn-' + fane).classList.add('active');
             if(fane === 'kart') map.invalidateSize();
         }
 
-        // --- Hent Data (Enkel versjon for e-ink ytelse) ---
-        async function fetchFlights() {
+        async function fetchRadar() {
             const b = map.getBounds();
-            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1`;
+            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
             try {
                 const res = await fetch(url);
                 const data = await res.json();
+                radarListe = [];
                 let count = 0;
                 for (let id in data) {
                     if (id !== "full_count" && id !== "version" && id !== "stats") {
                         flights[id] = { lat: data[id][1], lon: data[id][2] };
+                        radarListe.push({ rutenummer: (data[id][13] || "").replace(/\s+/g, '').toUpperCase() });
                         count++;
                     }
                 }
                 document.getElementById('counter').innerText = "Fly synlige: " + count;
-                document.getElementById('time').innerText = new Date().toLocaleTimeString();
             } catch(e) {}
         }
 
@@ -83,20 +84,39 @@
             ctx.fillStyle = "#000";
             for (let id in flights) {
                 const p = map.latLngToLayerPoint([flights[id].lat, flights[id].lon]);
-                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 3, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 4, 0, Math.PI * 2); ctx.fill();
             }
             requestAnimationFrame(draw);
         }
 
-        map.on('move zoom', () => {
-            const b = map.getBounds(), s = map.getSize(), tl = map.latLngToLayerPoint(b.getNorthWest());
-            canvas.style.left = tl.x + 'px'; canvas.style.top = tl.y + 'px';
-            canvas.width = s.x; canvas.height = s.y;
-        });
+        // --- Avinor Logikk ---
+        function hentAvinorData() {
+            fetch("flydata.xml?cachebuster=" + Date.now())
+                .then(r => r.text())
+                .then(txt => {
+                    lagretXmlDoc = new DOMParser().parseFromString(txt, "application/xml");
+                    visKombinertData();
+                });
+        }
+
+        function visKombinertData() {
+            var flightsXml = Array.from(lagretXmlDoc.getElementsByTagName("flight"));
+            var html = "";
+            flightsXml.forEach(f => {
+                var tid = f.getElementsByTagName("schedule_time")[0].textContent.substring(11, 16);
+                var flynr = f.getElementsByTagName("flight_id")[0].textContent;
+                var sted = f.getElementsByTagName("airport")[0].textContent;
+                html += "<tr><td>" + tid + "</td><td>" + flynr + "</td><td>" + sted + "</td><td>I rute</td></tr>";
+            });
+            document.getElementById("dataAvinor").innerHTML = html;
+        }
+
+        function nullstillOgHent() { hentAvinorData(); fetchRadar(); }
 
         // Initialisering
-        fetchFlights();
-        setInterval(fetchFlights, 60000); // 1 min oppdatering for å spare batteri/e-ink-flimmer
+        map.on('moveend', fetchRadar);
+        setInterval(nullstillOgHent, 60000);
+        nullstillOgHent();
         draw();
     </script>
 </body>
