@@ -5,19 +5,34 @@
     <title>Flyradar Norge</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background-color: #111; }
-        #map { height: 100vh; width: 100vw; }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #f8f9fa; transition: background 0.3s; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
         
+        /* Skyvebryter-stil */
         .ui-panel {
-            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            position: fixed; top: 20px; right: 20px; z-index: 10000;
             background: rgba(255,255,255,0.9); padding: 10px 20px; 
-            border-radius: 30px; font-family: sans-serif; cursor: pointer;
+            border-radius: 30px; display: flex; align-items: center; gap: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2); font-family: sans-serif;
         }
+        .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 22px; }
+        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #333; }
+        input:checked + .slider:before { transform: translateX(22px); }
     </style>
 </head>
 <body>
 
-    <div class="ui-panel" onclick="toggleTheme()">Tema: <span id="label">Lyst</span></div>
+    <div class="ui-panel">
+        <label class="switch">
+            <input type="checkbox" id="themeSwitch" onclick="toggleTheme()">
+            <span class="slider"></span>
+        </label>
+        <span id="label">Lyst tema</span>
+    </div>
+
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -26,17 +41,20 @@
         const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
         const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
         
-        // Canvas som ligger stabilt over kartet
         const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
-        map.getPanes().overlayPane.appendChild(canvas);
+        // Legg canvas i markerPane så det ligger over kartet men under kontroller
+        map.getPanes().markerPane.appendChild(canvas);
+        canvas.style.pointerEvents = "none"; // Gjør at du kan klikke gjennom canvaset
         const ctx = canvas.getContext('2d');
         
         let isDark = false;
         let allFlights = {};
 
         function toggleTheme() {
-            isDark = !isDark;
-            document.getElementById('label').innerText = isDark ? "Mørkt" : "Lyst";
+            isDark = document.getElementById('themeSwitch').checked;
+            document.getElementById('label').innerText = isDark ? "Mørkt tema" : "Lyst tema";
+            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
+            
             if (isDark) { map.removeLayer(light); dark.addTo(map); }
             else { map.removeLayer(dark); light.addTo(map); }
         }
@@ -63,39 +81,33 @@
         }
 
         function draw() {
-            // Fade-effekt (halen)
-            ctx.fillStyle = isDark ? "rgba(17,17,17,0.15)" : "rgba(248,249,250,0.15)";
+            ctx.fillStyle = isDark ? "rgba(17,17,17,0.1)" : "rgba(248,249,250,0.1)";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Tegn hale (Oransje glød)
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = "#ff9800";
-            ctx.fillStyle = "#ff9800";
 
             for (let id in allFlights) {
                 const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 
-                // Halen
+                // Hale (Glød)
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = "#ff9800";
+                ctx.fillStyle = "#ff9800";
                 ctx.beginPath();
                 ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Prikken (Skarp hvit/svart, ingen glød her)
+                // Prikk (Skarp)
                 ctx.shadowBlur = 0;
                 ctx.fillStyle = isDark ? "#ffffff" : "#000000";
                 ctx.beginPath();
                 ctx.arc(point.x, point.y, 1.5, 0, Math.PI * 2);
                 ctx.fill();
-
-                // Sett tilbake for neste fly
-                ctx.shadowBlur = 15;
-                ctx.fillStyle = "#ff9800";
             }
             requestAnimationFrame(draw);
         }
 
         window.addEventListener('resize', resize);
         map.on('move', resize);
+        map.on('zoom', resize);
         map.on('moveend', fetchFlights);
         
         resize();
