@@ -2,87 +2,78 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Norge Live Flyradar</title>
+    <title>Live Flyradar Norge</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; background-color: #f8f9fa; }
         #map { height: 100vh; width: 100vw; }
-        #status-bar { 
-            position: fixed; bottom: 0; left: 0; right: 0; 
-            background: rgba(255, 255, 255, 0.9); color: #333; 
-            font-family: sans-serif; padding: 10px; font-size: 0.75rem; 
-            z-index: 1000;
-        }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
-    <div id="status-bar">NORGE FLYRADAR | Fly: <span id="fly-count">0</span></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        // Bruk et dedikert overlay-canvas
-        const canvasLayer = L.canvasLayer().delegate(this);
-        canvasLayer.addTo(map);
-        const ctx = canvasLayer._canvas.getContext('2d');
+        const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
+        map.getPanes().overlayPane.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
 
         let allFlights = {};
-        const radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=75.0,57.0,0.0,35.0%26faa=1%26flight_states=1%26mlat=1%26air=1";
 
-        async function fetchFlights() {
+        function updateCanvasSize() {
+            const size = map.getSize();
+            canvas.style.position = 'absolute';
+            canvas.style.left = '0px';
+            canvas.style.top = '0px';
+            canvas.width = size.x;
+            canvas.height = size.y;
+        }
+
+        async function loadDataForView() {
+            // Hent synlige koordinater fra kartet
+            const b = map.getBounds();
+            // Format: North, South, West, East
+            const boundsStr = `${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}`;
+            
+            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${boundsStr}%26faa=1%26flight_states=1%26mlat=1%26air=1&_=${Date.now()}`;
+            
             try {
-                const res = await fetch(radarUrl + "&_=" + Date.now());
+                const res = await fetch(url);
                 const data = await res.json();
                 for (let id in data) {
                     if (id !== "full_count" && id !== "version" && id !== "stats") {
-                        const f = data[id];
-                        allFlights[id] = { lat: f[1], lon: f[2] };
+                        allFlights[id] = { lat: data[id][1], lon: data[id][2] };
                     }
                 }
-                document.getElementById('fly-count').innerText = Object.keys(allFlights).length;
-            } catch(e) {}
+            } catch(e) { console.error("Henting feilet", e); }
         }
 
-        // Funksjon for å tegne hvert frame
         function draw() {
-            // Tømmer IKKE hele skjermen med hvitt, men legger på en lett fade
-            // Ved å bruke 'destination-out' eller en veldig svak clear, unngår vi hvitt lag
-            ctx.fillStyle = "rgba(255,255,255,0.05)";
-            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            // Fade-effekt
+            ctx.fillStyle = "rgba(255,255,255,0.15)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.fillStyle = "#000000"; // Svarte prikker
+            ctx.fillStyle = "#000000";
             for (let id in allFlights) {
                 const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 1.5, 0, Math.PI * 2); // Radius 1.5
+                ctx.arc(point.x, point.y, 1.5, 0, Math.PI * 2);
                 ctx.fill();
             }
             requestAnimationFrame(draw);
         }
 
-        // Enkel canvas-plugin for Leaflet
-        L.CanvasLayer = L.Layer.extend({
-            onAdd: function(map) {
-                this._canvas = L.DomUtil.create('canvas', 'leaflet-layer');
-                map.getPanes().overlayPane.appendChild(this._canvas);
-                map.on('moveend', this._update, this);
-                this._update();
-            },
-            _update: function() {
-                const size = map.getSize();
-                this._canvas.width = size.x;
-                this._canvas.height = size.y;
-            }
-        });
-        L.canvasLayer = () => new L.CanvasLayer();
-
-        setInterval(fetchFlights, 15000);
-        fetchFlights();
+        map.on('moveend', loadDataForView); // Hent nye fly hver gang vi flytter kartet
+        map.on('zoomend', loadDataForView); // Hent nye fly hver gang vi zoomer
+        map.on('move', updateCanvasSize);
+        
+        updateCanvasSize();
+        loadDataForView();
+        setInterval(loadDataForView, 30000); // Oppdater hvert 30. sek
         draw();
     </script>
 </body>
