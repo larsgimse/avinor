@@ -42,7 +42,7 @@
         const ctx = canvas.getContext('2d');
         
         let isDark = false;
-        let flights = {}; // Struktur: { id: { lat, lon, history: [[lat, lon], ...] } }
+        let flights = {}; 
 
         function toggleTheme() {
             isDark = document.getElementById('themeSwitch').checked;
@@ -61,16 +61,17 @@
             const b = map.getBounds();
             const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
             try {
-                const data = await (await fetch(url)).json();
+                const res = await fetch(url);
+                const data = await res.json();
                 for (let id in data) {
-                    if (id.length < 10) continue; 
+                    if (id === "full_count" || id === "version" || id === "stats") continue;
                     if (!flights[id]) flights[id] = { history: [] };
                     flights[id].lat = data[id][1];
                     flights[id].lon = data[id][2];
                     flights[id].history.push([data[id][1], data[id][2]]);
-                    if (flights[id].history.length > 120) flights[id].history.shift(); // Siste 30 min (15s*120=1800s)
+                    if (flights[id].history.length > 120) flights[id].history.shift();
                 }
-            } catch(e) {}
+            } catch(e) { console.error(e); }
         }
 
         function draw() {
@@ -80,21 +81,20 @@
 
             for (let id in flights) {
                 const f = flights[id];
-                if (showTrails) {
+                if (showTrails && f.history.length > 1) {
                     ctx.beginPath();
+                    ctx.strokeStyle = "rgba(255, 152, 0, 0.6)";
+                    ctx.lineWidth = 1.5;
                     for (let i = 0; i < f.history.length; i++) {
                         const p = map.latLngToLayerPoint(f.history[i]);
-                        ctx.strokeStyle = `rgba(255, 152, 0, ${i / f.history.length})`; // Toner ut
-                        ctx.lineWidth = 1.5;
                         if (i === 0) ctx.moveTo(p.x - tl.x, p.y - tl.y);
                         else ctx.lineTo(p.x - tl.x, p.y - tl.y);
                     }
                     ctx.stroke();
                 }
-                // Prikk
                 const p = map.latLngToLayerPoint([f.lat, f.lon]);
                 ctx.fillStyle = isDark ? "#fff" : "#000";
-                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 2, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 2.5, 0, Math.PI * 2); ctx.fill();
             }
             requestAnimationFrame(draw);
         }
