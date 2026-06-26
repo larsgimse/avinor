@@ -5,10 +5,10 @@
     <title>Flyradar Norge</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background-color: #f8f9fa; transition: background 0.3s; }
+        body { margin: 0; padding: 0; overflow: hidden; }
         #map { height: 100vh; width: 100vw; z-index: 1; }
         
-        /* Skyvebryter-stil */
+        /* Skyvebryter */
         .ui-panel {
             position: fixed; top: 20px; right: 20px; z-index: 10000;
             background: rgba(255,255,255,0.9); padding: 10px 20px; 
@@ -42,30 +42,28 @@
         const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
         
         const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
-        // Legg canvas i markerPane så det ligger over kartet men under kontroller
-        map.getPanes().markerPane.appendChild(canvas);
-        canvas.style.pointerEvents = "none"; // Gjør at du kan klikke gjennom canvaset
+        map.getPanes().overlayPane.appendChild(canvas);
+        canvas.style.pointerEvents = "none";
+        canvas.style.zIndex = "2"; // Sørg for at den ligger over kartet
         const ctx = canvas.getContext('2d');
         
         let isDark = false;
-        let allFlights = {};
 
         function toggleTheme() {
             isDark = document.getElementById('themeSwitch').checked;
             document.getElementById('label').innerText = isDark ? "Mørkt tema" : "Lyst tema";
-            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
-            
             if (isDark) { map.removeLayer(light); dark.addTo(map); }
             else { map.removeLayer(dark); light.addTo(map); }
         }
 
         function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            canvas.style.width = window.innerWidth + 'px';
-            canvas.style.height = window.innerHeight + 'px';
+            canvas.width = map.getSize().x;
+            canvas.height = map.getSize().y;
+            canvas.style.width = map.getSize().x + 'px';
+            canvas.style.height = map.getSize().y + 'px';
         }
 
+        let allFlights = {};
         async function fetchFlights() {
             const b = map.getBounds();
             const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
@@ -81,31 +79,30 @@
         }
 
         function draw() {
-            ctx.fillStyle = isDark ? "rgba(17,17,17,0.1)" : "rgba(248,249,250,0.1)";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // VIKTIG: Vi tømmer lerretet helt i stedet for å tegne en farget firkant over
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             for (let id in allFlights) {
                 const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 
-                // Hale (Glød)
-                ctx.shadowBlur = 12;
+                // Oransje hale (med litt lavere opacity for å se "glødende" ut)
+                ctx.shadowBlur = 10;
                 ctx.shadowColor = "#ff9800";
-                ctx.fillStyle = "#ff9800";
+                ctx.fillStyle = "rgba(255, 152, 0, 0.8)";
                 ctx.beginPath();
                 ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Prikk (Skarp)
+                // Hvit/Svart senter
                 ctx.shadowBlur = 0;
                 ctx.fillStyle = isDark ? "#ffffff" : "#000000";
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 1.5, 0, Math.PI * 2);
+                ctx.arc(point.x, point.y, 1.2, 0, Math.PI * 2);
                 ctx.fill();
             }
             requestAnimationFrame(draw);
         }
 
-        window.addEventListener('resize', resize);
         map.on('move', resize);
         map.on('zoom', resize);
         map.on('moveend', fetchFlights);
