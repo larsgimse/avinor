@@ -3,45 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nordic Flight Trails</title>
+    <title>Norge Live Flyradar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; background-color: #000; overflow: hidden; }
-        #map { height: 100vh; width: 100vw; background-color: #000; }
-        #status-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: #fff; font-family: monospace; padding: 5px 10px; font-size: 0.8rem; z-index: 1000; display: flex; justify-content: space-between; }
+        body { margin: 0; padding: 0; background-color: #f8f9fa; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; }
+        #status-bar { 
+            position: fixed; bottom: 0; left: 0; right: 0; 
+            background: rgba(255, 255, 255, 0.8); color: #333; 
+            font-family: sans-serif; padding: 10px 15px; font-size: 0.8rem; 
+            z-index: 1000; display: flex; justify-content: space-between;
+            border-top: 1px solid #ccc;
+        }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
     <div id="status-bar">
-        <span>NORDIC FLIGHT RADAR LIVE</span>
+        <span>NORGE FLYRADAR LIVE</span>
         <span id="fly-count">Fly: 0</span>
-        <span id="status-text">Laster data...</span>
+        <span id="status-text">Kobler til...</span>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 1. Konfigurer kartet
+        // 1. Konfigurer kartet (Sentrert over Norge)
         const map = L.map('map', {
             zoomControl: false,
-            attributionControl: false
-        }).setView([63.0, 15.0], 5); // Sentrert over Norden
+            attributionControl: false,
+            minZoom: 5,
+            maxBounds: [[57.0, 0.0], [75.0, 35.0]] // Låser kartet til Norge-området
+        }).setView([64.5, 15.0], 5);
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        // 2. Bruker 'positron' for et lyst, rent karttema
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        // 2. Sett opp Canvas-lag for haler
         const trailCanvas = L.canvas({ padding: 0.5 }).addTo(map);
         const ctx = trailCanvas._container.getContext('2d');
 
-        // 3. Variabler for data og animasjon
-        let allFlights = {}; // Lagrer flydata med interpolasjon
+        let allFlights = {};
         let lastDataFetchTime = 0;
-        const dataFetchInterval = 15000; // Hent data hvert 15. sekund
+        const dataFetchInterval = 15000;
 
-        // Flightradar24 URL med proxy og bounds for Norden
-        // For bedre dekning over norden må du kanskje utvide grensene
-        const radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=70.0,55.0,5.0,25.0%26faa=1%26flight_states=1%26mlat=1%26gnd=1%26air=1";
+        // Grenser for Norge-fokus
+        const radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=75.0,57.0,0.0,35.0%26faa=1%26flight_states=1%26mlat=1%26gnd=0%26air=1";
 
         function updateStatus(text, count = null) {
             document.getElementById('status-text').innerText = text;
@@ -49,99 +55,59 @@
         }
 
         async function fetchFlightData() {
-            updateStatus("Oppdaterer...");
             try {
                 const response = await fetch(radarUrl + "&_=" + new Date().getTime());
                 const data = await response.json();
                 lastDataFetchTime = performance.now();
 
                 let count = 0;
-                const now = performance.now();
-
-                // Marker alle eksisterende fly som "kanskje utgått"
                 for (let id in allFlights) allFlights[id].stillActive = false;
 
-                // Behandle nye data
                 for (let key in data) {
                     if (key !== "full_count" && key !== "version" && key !== "stats") {
                         const f = data[key];
-                        const lat = f[1];
-                        const lon = f[2];
-                        const id = key;
-
-                        if (allFlights[id]) {
-                            // Oppdater eksisterende fly
-                            allFlights[id].startLatLon = allFlights[id].targetLatLon;
-                            allFlights[id].targetLatLon = [lat, lon];
-                            allFlights[id].stillActive = true;
+                        if (allFlights[key]) {
+                            allFlights[key].startLatLon = allFlights[key].targetLatLon;
+                            allFlights[key].targetLatLon = [f[1], f[2]];
+                            allFlights[key].stillActive = true;
                         } else {
-                            // Nytt fly
-                            allFlights[id] = {
-                                startLatLon: [lat, lon],
-                                targetLatLon: [lat, lon],
-                                stillActive: true
-                            };
+                            allFlights[key] = { startLatLon: [f[1], f[2]], targetLatLon: [f[1], f[2]], stillActive: true };
                         }
                         count++;
                     }
                 }
-
-                // Fjern utgåtte fly
-                for (let id in allFlights) {
-                    if (!allFlights[id].stillActive) delete allFlights[id];
-                }
-
+                for (let id in allFlights) { if (!allFlights[id].stillActive) delete allFlights[id]; }
                 updateStatus("Live", count);
-            } catch (e) {
-                console.error(e);
-                updateStatus("Feil");
-            }
+            } catch (e) { updateStatus("Kunne ikke hente data"); }
         }
 
-        // 4. Animasjonsloop
         function animationLoop() {
             const now = performance.now();
-            const elapsedSinceData = now - lastDataFetchTime;
+            const t = Math.min((now - lastDataFetchTime) / dataFetchInterval, 1);
+            const easedT = t * (2 - t);
 
-            // Beregn framdrift (0-1) for interpolasjon mellom datainnhentinger
-            let t = Math.min(elapsedSinceData / dataFetchInterval, 1);
-
-            // Jevn overgang (easing) for finere bevegelse
-            t = t * (2 - t);
-
-            // --- Haleeffekt (Fading) ---
-            // Tegn et gjennomsiktig svart lag over alt for å fade ut gamle posisjoner
-            ctx.fillStyle = "rgba(0, 0, 0, 0.05)"; // Juster 0.05 for lengre/kortere hale
+            // Fader ut halene mot hvitt (passer lyst kart)
+            ctx.fillStyle = "rgba(255, 255, 255, 0.1)"; 
             ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-            // --- Tegn flyene ---
-            ctx.fillStyle = "white"; // Farge på flyet
-            ctx.lineWidth = 0;
+            ctx.fillStyle = "#0056b3"; // Mørkeblå prikker for god kontrast
 
             for (let id in allFlights) {
                 const f = allFlights[id];
-
-                // Jevn interpolasjon (lerp) mellom start og mål
-                const curLat = f.startLatLon[0] + (f.targetLatLon[0] - f.startLatLon[0]) * t;
-                const curLon = f.startLatLon[1] + (f.targetLatLon[1] - f.startLatLon[1]) * t;
-
-                // Konverter lat/lon til pixel-koordinater på canvas
+                const curLat = f.startLatLon[0] + (f.targetLatLon[0] - f.startLatLon[0]) * easedT;
+                const curLon = f.startLatLon[1] + (f.targetLatLon[1] - f.startLatLon[1]) * easedT;
                 const point = map.latLngToContainerPoint([curLat, curLon]);
 
-                // Tegn den hvite prikken
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 2, 0, 2 * Math.PI, false); // Radius 2
+                ctx.arc(point.x, point.y, 2.5, 0, 2 * Math.PI);
                 ctx.fill();
             }
-
-            // Start neste frame
             requestAnimationFrame(animationLoop);
         }
 
-        // 5. Start systemet
-        fetchFlightData(); // Første datahenting
-        setInterval(fetchFlightData, dataFetchInterval); // Gjenta henting
-        animationLoop(); // Start animasjon
+        fetchFlightData();
+        setInterval(fetchFlightData, dataFetchInterval);
+        animationLoop();
     </script>
 </body>
 </html>
