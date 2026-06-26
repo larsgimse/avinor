@@ -2,18 +2,18 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <title>Flyradar Norge</title>
+    <title>Live Flyradar Norge</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #f8f9fa; }
         #map { height: 100vh; width: 100vw; z-index: 1; }
         
-        /* Skyvebryter */
+        /* Skyvebryter-stil */
         .ui-panel {
             position: fixed; top: 20px; right: 20px; z-index: 10000;
-            background: rgba(255,255,255,0.9); padding: 10px 20px; 
-            border-radius: 30px; display: flex; align-items: center; gap: 10px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2); font-family: sans-serif;
+            background: rgba(255,255,255,0.9); padding: 12px 20px; 
+            border-radius: 50px; display: flex; align-items: center; gap: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-family: sans-serif;
         }
         .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
         .switch input { opacity: 0; width: 0; height: 0; }
@@ -38,32 +38,32 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
+        
         const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
         const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
         
         const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
-        map.getPanes().overlayPane.appendChild(canvas);
+        map.getPanes().markerPane.appendChild(canvas);
         canvas.style.pointerEvents = "none";
-        canvas.style.zIndex = "2"; // Sørg for at den ligger over kartet
         const ctx = canvas.getContext('2d');
         
         let isDark = false;
+        let allFlights = {};
 
         function toggleTheme() {
             isDark = document.getElementById('themeSwitch').checked;
             document.getElementById('label').innerText = isDark ? "Mørkt tema" : "Lyst tema";
+            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
+            
             if (isDark) { map.removeLayer(light); dark.addTo(map); }
             else { map.removeLayer(dark); light.addTo(map); }
         }
 
         function resize() {
-            canvas.width = map.getSize().x;
-            canvas.height = map.getSize().y;
-            canvas.style.width = map.getSize().x + 'px';
-            canvas.style.height = map.getSize().y + 'px';
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
         }
 
-        let allFlights = {};
         async function fetchFlights() {
             const b = map.getBounds();
             const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
@@ -79,16 +79,16 @@
         }
 
         function draw() {
-            // VIKTIG: Vi tømmer lerretet helt i stedet for å tegne en farget firkant over
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             for (let id in allFlights) {
+                // Konverterer hver gang så prikkene låser seg til kartet ved zooming
                 const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 
-                // Oransje hale (med litt lavere opacity for å se "glødende" ut)
+                // Oransje glød
                 ctx.shadowBlur = 10;
                 ctx.shadowColor = "#ff9800";
-                ctx.fillStyle = "rgba(255, 152, 0, 0.8)";
+                ctx.fillStyle = "#ff9800";
                 ctx.beginPath();
                 ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
                 ctx.fill();
@@ -103,12 +103,14 @@
             requestAnimationFrame(draw);
         }
 
+        window.addEventListener('resize', resize);
         map.on('move', resize);
         map.on('zoom', resize);
         map.on('moveend', fetchFlights);
         
         resize();
         fetchFlights();
+        setInterval(fetchFlights, 20000); // Oppdater data hvert 20. sek
         draw();
     </script>
 </body>
