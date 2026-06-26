@@ -6,108 +6,84 @@
     <title>Norge Live Flyradar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; background-color: #f8f9fa; overflow: hidden; }
+        body { margin: 0; padding: 0; background-color: #f8f9fa; }
         #map { height: 100vh; width: 100vw; }
         #status-bar { 
             position: fixed; bottom: 0; left: 0; right: 0; 
-            background: rgba(255, 255, 255, 0.8); color: #333; 
-            font-family: sans-serif; padding: 10px 15px; font-size: 0.8rem; 
-            z-index: 1000; display: flex; justify-content: space-between;
-            border-top: 1px solid #ccc;
+            background: rgba(255, 255, 255, 0.9); color: #333; 
+            font-family: sans-serif; padding: 10px; font-size: 0.75rem; 
+            z-index: 1000;
         }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
-    <div id="status-bar">
-        <span>NORGE FLYRADAR LIVE</span>
-        <span id="fly-count">Fly: 0</span>
-        <span id="status-text">Kobler til...</span>
-    </div>
+    <div id="status-bar">NORGE FLYRADAR | Fly: <span id="fly-count">0</span></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 1. Konfigurer kartet (Sentrert over Norge)
-        const map = L.map('map', {
-            zoomControl: false,
-            attributionControl: false,
-            minZoom: 5,
-            maxBounds: [[57.0, 0.0], [75.0, 35.0]] // Låser kartet til Norge-området
-        }).setView([64.5, 15.0], 5);
-
-        // 2. Bruker 'positron' for et lyst, rent karttema
+        const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-        const trailCanvas = L.canvas({ padding: 0.5 }).addTo(map);
-        const ctx = trailCanvas._container.getContext('2d');
+        // Bruk et dedikert overlay-canvas
+        const canvasLayer = L.canvasLayer().delegate(this);
+        canvasLayer.addTo(map);
+        const ctx = canvasLayer._canvas.getContext('2d');
 
         let allFlights = {};
-        let lastDataFetchTime = 0;
-        const dataFetchInterval = 15000;
+        const radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=75.0,57.0,0.0,35.0%26faa=1%26flight_states=1%26mlat=1%26air=1";
 
-        // Grenser for Norge-fokus
-        const radarUrl = "https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=75.0,57.0,0.0,35.0%26faa=1%26flight_states=1%26mlat=1%26gnd=0%26air=1";
-
-        function updateStatus(text, count = null) {
-            document.getElementById('status-text').innerText = text;
-            if (count !== null) document.getElementById('fly-count').innerText = "Fly: " + count;
-        }
-
-        async function fetchFlightData() {
+        async function fetchFlights() {
             try {
-                const response = await fetch(radarUrl + "&_=" + new Date().getTime());
-                const data = await response.json();
-                lastDataFetchTime = performance.now();
-
-                let count = 0;
-                for (let id in allFlights) allFlights[id].stillActive = false;
-
-                for (let key in data) {
-                    if (key !== "full_count" && key !== "version" && key !== "stats") {
-                        const f = data[key];
-                        if (allFlights[key]) {
-                            allFlights[key].startLatLon = allFlights[key].targetLatLon;
-                            allFlights[key].targetLatLon = [f[1], f[2]];
-                            allFlights[key].stillActive = true;
-                        } else {
-                            allFlights[key] = { startLatLon: [f[1], f[2]], targetLatLon: [f[1], f[2]], stillActive: true };
-                        }
-                        count++;
+                const res = await fetch(radarUrl + "&_=" + Date.now());
+                const data = await res.json();
+                for (let id in data) {
+                    if (id !== "full_count" && id !== "version" && id !== "stats") {
+                        const f = data[id];
+                        allFlights[id] = { lat: f[1], lon: f[2] };
                     }
                 }
-                for (let id in allFlights) { if (!allFlights[id].stillActive) delete allFlights[id]; }
-                updateStatus("Live", count);
-            } catch (e) { updateStatus("Kunne ikke hente data"); }
+                document.getElementById('fly-count').innerText = Object.keys(allFlights).length;
+            } catch(e) {}
         }
 
-        function animationLoop() {
-            const now = performance.now();
-            const t = Math.min((now - lastDataFetchTime) / dataFetchInterval, 1);
-            const easedT = t * (2 - t);
-
-            // Fader ut halene mot hvitt (passer lyst kart)
-            ctx.fillStyle = "rgba(255, 255, 255, 0.1)"; 
+        // Funksjon for å tegne hvert frame
+        function draw() {
+            // Tømmer IKKE hele skjermen med hvitt, men legger på en lett fade
+            // Ved å bruke 'destination-out' eller en veldig svak clear, unngår vi hvitt lag
+            ctx.fillStyle = "rgba(255,255,255,0.05)";
             ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-            ctx.fillStyle = "#0056b3"; // Mørkeblå prikker for god kontrast
-
+            ctx.fillStyle = "#000000"; // Svarte prikker
             for (let id in allFlights) {
-                const f = allFlights[id];
-                const curLat = f.startLatLon[0] + (f.targetLatLon[0] - f.startLatLon[0]) * easedT;
-                const curLon = f.startLatLon[1] + (f.targetLatLon[1] - f.startLatLon[1]) * easedT;
-                const point = map.latLngToContainerPoint([curLat, curLon]);
-
+                const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 ctx.beginPath();
-                ctx.arc(point.x, point.y, 2.5, 0, 2 * Math.PI);
+                ctx.arc(point.x, point.y, 1.5, 0, Math.PI * 2); // Radius 1.5
                 ctx.fill();
             }
-            requestAnimationFrame(animationLoop);
+            requestAnimationFrame(draw);
         }
 
-        fetchFlightData();
-        setInterval(fetchFlightData, dataFetchInterval);
-        animationLoop();
+        // Enkel canvas-plugin for Leaflet
+        L.CanvasLayer = L.Layer.extend({
+            onAdd: function(map) {
+                this._canvas = L.DomUtil.create('canvas', 'leaflet-layer');
+                map.getPanes().overlayPane.appendChild(this._canvas);
+                map.on('moveend', this._update, this);
+                this._update();
+            },
+            _update: function() {
+                const size = map.getSize();
+                this._canvas.width = size.x;
+                this._canvas.height = size.y;
+            }
+        });
+        L.canvasLayer = () => new L.CanvasLayer();
+
+        setInterval(fetchFlights, 15000);
+        fetchFlights();
+        draw();
     </script>
 </body>
 </html>
