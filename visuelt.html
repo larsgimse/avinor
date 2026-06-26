@@ -2,45 +2,60 @@
 <html lang="no">
 <head>
     <meta charset="UTF-8">
-    <title>Live Flyradar Norge</title>
+    <title>Flyradar Norge</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; background-color: #f8f9fa; }
+        body { margin: 0; padding: 0; transition: background 0.3s; }
         #map { height: 100vh; width: 100vw; }
+        
+        /* Bryter-design */
+        #theme-toggle {
+            position: fixed; top: 10px; right: 10px; z-index: 1000;
+            background: rgba(255,255,255,0.9); padding: 8px 12px;
+            border-radius: 20px; font-family: sans-serif; cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
 
+    <div id="theme-toggle" onclick="toggleTheme()">Skift tema</div>
     <div id="map"></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        let isDark = false;
         const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+        
+        // Definer lagene
+        const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png');
+        const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        lightLayer.addTo(map);
 
         const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
         map.getPanes().overlayPane.appendChild(canvas);
         const ctx = canvas.getContext('2d');
-
+        
         let allFlights = {};
 
-        function updateCanvasSize() {
-            const size = map.getSize();
-            canvas.style.position = 'absolute';
-            canvas.style.left = '0px';
-            canvas.style.top = '0px';
-            canvas.width = size.x;
-            canvas.height = size.y;
+        function toggleTheme() {
+            isDark = !isDark;
+            // Bytt kart
+            map.removeLayer(isDark ? lightLayer : darkLayer);
+            (isDark ? darkLayer : lightLayer).addTo(map);
+            
+            // Endre bakgrunn for body
+            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
         }
 
-        async function loadDataForView() {
-            // Hent synlige koordinater fra kartet
+        function updateCanvasSize() {
+            canvas.width = map.getSize().x;
+            canvas.height = map.getSize().y;
+        }
+
+        async function loadData() {
             const b = map.getBounds();
-            // Format: North, South, West, East
-            const boundsStr = `${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}`;
-            
-            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${boundsStr}%26faa=1%26flight_states=1%26mlat=1%26air=1&_=${Date.now()}`;
-            
+            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
             try {
                 const res = await fetch(url);
                 const data = await res.json();
@@ -49,15 +64,15 @@
                         allFlights[id] = { lat: data[id][1], lon: data[id][2] };
                     }
                 }
-            } catch(e) { console.error("Henting feilet", e); }
+            } catch(e) {}
         }
 
         function draw() {
-            // Fade-effekt
-            ctx.fillStyle = "rgba(255,255,255,0.15)";
+            // Fade-farge avhenger av tema
+            ctx.fillStyle = isDark ? "rgba(17, 17, 17, 0.15)" : "rgba(248, 249, 250, 0.15)";
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            ctx.fillStyle = "#000000";
+            ctx.fillStyle = isDark ? "#ffffff" : "#000000";
             for (let id in allFlights) {
                 const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
                 ctx.beginPath();
@@ -67,13 +82,10 @@
             requestAnimationFrame(draw);
         }
 
-        map.on('moveend', loadDataForView); // Hent nye fly hver gang vi flytter kartet
-        map.on('zoomend', loadDataForView); // Hent nye fly hver gang vi zoomer
         map.on('move', updateCanvasSize);
-        
+        map.on('moveend', loadData);
         updateCanvasSize();
-        loadDataForView();
-        setInterval(loadDataForView, 30000); // Oppdater hvert 30. sek
+        loadData();
         draw();
     </script>
 </body>
