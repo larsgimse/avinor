@@ -6,31 +6,27 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #f8f9fa; }
-        #map { height: 100vh; width: 100vw; z-index: 1; }
-        
-        /* Skyvebryter-stil */
+        #map { height: 100vh; width: 100vw; }
         .ui-panel {
             position: fixed; top: 20px; right: 20px; z-index: 10000;
-            background: rgba(255,255,255,0.9); padding: 12px 20px; 
-            border-radius: 50px; display: flex; align-items: center; gap: 15px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-family: sans-serif;
+            background: rgba(255,255,255,0.9); padding: 15px; 
+            border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            font-family: sans-serif; display: flex; flex-direction: column; gap: 10px;
         }
-        .switch { position: relative; display: inline-block; width: 44px; height: 22px; }
+        .row { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
         .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 22px; }
-        .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
         input:checked + .slider { background-color: #333; }
-        input:checked + .slider:before { transform: translateX(22px); }
+        input:checked + .slider:before { transform: translateX(20px); }
     </style>
 </head>
 <body>
 
     <div class="ui-panel">
-        <label class="switch">
-            <input type="checkbox" id="themeSwitch" onclick="toggleTheme()">
-            <span class="slider"></span>
-        </label>
-        <span id="label">Lyst tema</span>
+        <div class="row"> Tema: <label class="switch"><input type="checkbox" id="themeSwitch" onclick="toggleTheme()"><span class="slider"></span></label></div>
+        <div class="row"> Haler: <label class="switch"><input type="checkbox" id="trailSwitch" checked><span class="slider"></span></label></div>
     </div>
 
     <div id="map"></div>
@@ -38,80 +34,74 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
-        
         const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
         const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
         
-        const canvas = L.DomUtil.create('canvas', 'leaflet-layer');
-        map.getPanes().markerPane.appendChild(canvas);
-        canvas.style.pointerEvents = "none";
+        const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated');
+        map.getPanes().overlayPane.appendChild(canvas);
         const ctx = canvas.getContext('2d');
         
         let isDark = false;
-        let allFlights = {};
+        let flights = {}; // Struktur: { id: { lat, lon, history: [[lat, lon], ...] } }
 
         function toggleTheme() {
             isDark = document.getElementById('themeSwitch').checked;
-            document.getElementById('label').innerText = isDark ? "Mørkt tema" : "Lyst tema";
             document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
-            
             if (isDark) { map.removeLayer(light); dark.addTo(map); }
             else { map.removeLayer(dark); light.addTo(map); }
         }
 
-        function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+        function update() {
+            const b = map.getBounds(), size = map.getSize(), tl = map.latLngToLayerPoint(b.getNorthWest());
+            canvas.style.left = tl.x + 'px'; canvas.style.top = tl.y + 'px';
+            canvas.width = size.x; canvas.height = size.y;
         }
 
         async function fetchFlights() {
             const b = map.getBounds();
             const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
             try {
-                const res = await fetch(url);
-                const data = await res.json();
+                const data = await (await fetch(url)).json();
                 for (let id in data) {
-                    if (id !== "full_count" && id !== "version" && id !== "stats") {
-                        allFlights[id] = { lat: data[id][1], lon: data[id][2] };
-                    }
+                    if (id.length < 10) continue; 
+                    if (!flights[id]) flights[id] = { history: [] };
+                    flights[id].lat = data[id][1];
+                    flights[id].lon = data[id][2];
+                    flights[id].history.push([data[id][1], data[id][2]]);
+                    if (flights[id].history.length > 120) flights[id].history.shift(); // Siste 30 min (15s*120=1800s)
                 }
             } catch(e) {}
         }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const tl = map.latLngToLayerPoint(map.getBounds().getNorthWest());
+            const showTrails = document.getElementById('trailSwitch').checked;
 
-            for (let id in allFlights) {
-                // Konverterer hver gang så prikkene låser seg til kartet ved zooming
-                const point = map.latLngToContainerPoint([allFlights[id].lat, allFlights[id].lon]);
-                
-                // Oransje glød
-                ctx.shadowBlur = 10;
-                ctx.shadowColor = "#ff9800";
-                ctx.fillStyle = "#ff9800";
-                ctx.beginPath();
-                ctx.arc(point.x, point.y, 2, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Hvit/Svart senter
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = isDark ? "#ffffff" : "#000000";
-                ctx.beginPath();
-                ctx.arc(point.x, point.y, 1.2, 0, Math.PI * 2);
-                ctx.fill();
+            for (let id in flights) {
+                const f = flights[id];
+                if (showTrails) {
+                    ctx.beginPath();
+                    for (let i = 0; i < f.history.length; i++) {
+                        const p = map.latLngToLayerPoint(f.history[i]);
+                        ctx.strokeStyle = `rgba(255, 152, 0, ${i / f.history.length})`; // Toner ut
+                        ctx.lineWidth = 1.5;
+                        if (i === 0) ctx.moveTo(p.x - tl.x, p.y - tl.y);
+                        else ctx.lineTo(p.x - tl.x, p.y - tl.y);
+                    }
+                    ctx.stroke();
+                }
+                // Prikk
+                const p = map.latLngToLayerPoint([f.lat, f.lon]);
+                ctx.fillStyle = isDark ? "#fff" : "#000";
+                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 2, 0, Math.PI * 2); ctx.fill();
             }
             requestAnimationFrame(draw);
         }
 
-        window.addEventListener('resize', resize);
-        map.on('move', resize);
-        map.on('zoom', resize);
+        map.on('move zoom', update);
         map.on('moveend', fetchFlights);
-        
-        resize();
-        fetchFlights();
-        setInterval(fetchFlights, 20000); // Oppdater data hvert 20. sek
-        draw();
+        update(); fetchFlights(); setInterval(fetchFlights, 15000); draw();
     </script>
 </body>
 </html>
