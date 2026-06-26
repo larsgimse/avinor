@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <title>Live Flyradar Norge</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #f8f9fa; transition: background 0.3s; }
+        #map { height: 100vh; width: 100vw; }
+        
+        .ui-panel {
+            position: fixed; top: 20px; right: 20px; z-index: 10000;
+            background: rgba(255,255,255,0.9); padding: 15px; 
+            border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            font-family: sans-serif; display: flex; flex-direction: column; gap: 8px;
+        }
+        .row { display: flex; align-items: center; justify-content: space-between; gap: 15px; font-size: 0.85rem; }
+        .switch { position: relative; display: inline-block; width: 35px; height: 18px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #333; }
+        input:checked + .slider:before { transform: translateX(17px); }
+        .counter { position: fixed; bottom: 20px; left: 20px; z-index: 10000; background: rgba(255,255,255,0.8); padding: 8px 15px; border-radius: 20px; font-family: sans-serif; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <div class="row">Tema: <label class="switch"><input type="checkbox" id="themeSwitch" onclick="toggleTheme()"><span class="slider"></span></label></div>
+        <div class="row">Haler: <label class="switch"><input type="checkbox" id="trailSwitch" checked><span class="slider"></span></label></div>
+        <div class="row">Flynr: <label class="switch"><input type="checkbox" id="flightNumSwitch"><span class="slider"></span></label></div>
+        <div class="row">Kallesignal: <label class="switch"><input type="checkbox" id="callsignSwitch"><span class="slider"></span></label></div>
+        <div class="row">Høyde: <label class="switch"><input type="checkbox" id="altSwitch"><span class="slider"></span></label></div>
+        <div class="row">Fra: <label class="switch"><input type="checkbox" id="originSwitch"><span class="slider"></span></label></div>
+        <div class="row">Til: <label class="switch"><input type="checkbox" id="destSwitch"><span class="slider"></span></label></div>
+    </div>
+
+    <div id="counter" class="counter">Fly synlige: 0</div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', { zoomControl: false }).setView([64.5, 15.0], 5);
+        const light = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(map);
+        const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
+        
+        const canvas = L.DomUtil.create('canvas', 'leaflet-zoom-animated');
+        map.getPanes().overlayPane.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        
+        let isDark = false;
+        let flights = {}; 
+
+        function toggleTheme() {
+            isDark = document.getElementById('themeSwitch').checked;
+            document.body.style.backgroundColor = isDark ? "#111" : "#f8f9fa";
+            if (isDark) { map.removeLayer(light); dark.addTo(map); }
+            else { map.removeLayer(dark); light.addTo(map); }
+        }
+
+        function update() {
+            const b = map.getBounds(), size = map.getSize(), tl = map.latLngToLayerPoint(b.getNorthWest());
+            canvas.style.left = tl.x + 'px'; canvas.style.top = tl.y + 'px';
+            canvas.width = size.x; canvas.height = size.y;
+        }
+
+        async function fetchFlights() {
+            const b = map.getBounds();
+            const url = `https://corsproxy.io/?https://data-cloud.flightradar24.com/zones/fcgi/feed.js?bounds=${b.getNorth().toFixed(1)},${b.getSouth().toFixed(1)},${b.getWest().toFixed(1)},${b.getEast().toFixed(1)}%26faa=1%26air=1&_=${Date.now()}`;
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                let count = 0;
+                for (let id in data) {
+                    if (id === "full_count" || id === "version" || id === "stats") continue;
+                    if (!flights[id]) flights[id] = { history: [] };
+                    flights[id].lat = data[id][1];
+                    flights[id].lon = data[id][2];
+                    flights[id].flight = data[id][13]; // Flight nummer
+                    flights[id].callsign = data[id][16]; // Kallesignal
+                    flights[id].alt = data[id][4];      // Høyde (fot)
+                    flights[id].origin = data[id][11];
+                    flights[id].dest = data[id][12];
+                    flights[id].history.push([data[id][1], data[id][2]]);
+                    if (flights[id].history.length > 120) flights[id].history.shift();
+                    count++;
+                }
+                document.getElementById('counter').innerText = "Fly synlige: " + count;
+            } catch(e) {}
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const tl = map.latLngToLayerPoint(map.getBounds().getNorthWest());
+            
+            const showTrails = document.getElementById('trailSwitch').checked;
+            const showFlight = document.getElementById('flightNumSwitch').checked;
+            const showCallsign = document.getElementById('callsignSwitch').checked;
+            const showAlt = document.getElementById('altSwitch').checked;
+            const showOrigin = document.getElementById('originSwitch').checked;
+            const showDest = document.getElementById('destSwitch').checked;
+
+            for (let id in flights) {
+                const f = flights[id];
+                const p = map.latLngToLayerPoint([f.lat, f.lon]);
+                
+                ctx.fillStyle = isDark ? "#fff" : "#000";
+                ctx.beginPath(); ctx.arc(p.x - tl.x, p.y - tl.y, 3, 0, Math.PI * 2); ctx.fill();
+
+                let labels = [];
+                if (showFlight) labels.push(f.flight);
+                if (showCallsign) labels.push(f.callsign);
+                if (showAlt) labels.push(f.alt + "ft");
+                
+                // Logikk for Fra/Til
+                if (showOrigin && showDest) labels.push(`${f.origin || '??'} → ${f.dest || '??'}`);
+                else if (showOrigin) labels.push(`${f.origin || '??'} →`);
+                else if (showDest) labels.push(`→ ${f.dest || '??'}`);
+
+                if (labels.length > 0) {
+                    ctx.font = "10px sans-serif";
+                    ctx.fillStyle = isDark ? "#aaa" : "#555";
+                    ctx.fillText(labels.join(" | "), p.x - tl.x + 8, p.y - tl.y + 4);
+                }
+
+                if (showTrails && f.history.length > 2) {
+                    ctx.beginPath();
+                    ctx.strokeStyle = "rgba(255, 152, 0, 0.5)";
+                    ctx.lineWidth = 1.5;
+                    const pStart = map.latLngToLayerPoint(f.history[0]);
+                    ctx.moveTo(pStart.x - tl.x, pStart.y - tl.y);
+                    for (let i = 1; i < f.history.length - 1; i++) {
+                        const p = map.latLngToLayerPoint(f.history[i]);
+                        const next = map.latLngToLayerPoint(f.history[i+1]);
+                        ctx.quadraticCurveTo(p.x - tl.x, p.y - tl.y, (p.x + next.x)/2 - tl.x, (p.y + next.y)/2 - tl.y);
+                    }
+                    ctx.stroke();
+                }
+            }
+            requestAnimationFrame(draw);
+        }
+
+        map.on('move zoom', update);
+        map.on('moveend', fetchFlights);
+        update(); 
+        fetchFlights(); 
+        setInterval(fetchFlights, 15000); 
+        draw();
+    </script>
+</body>
+</html>
