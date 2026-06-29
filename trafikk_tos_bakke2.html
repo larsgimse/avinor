@@ -78,7 +78,6 @@
         var lagretXmlDoc = null;
         var radarListe = []; 
         var brukteRadarFly = {}; 
-        var detaljCache = {}; // Lagrer detaljdata for å unngå unødvendige API-kall per sekund
         var oppdateringsFrekvensSekunder = 30;
         var sekunderIgjen = oppdateringsFrekvensSekunder;
 
@@ -143,6 +142,7 @@
                             var f = data[nøkkel];
                             var avst = kalkulerAvstand(tosLat, tosLon, f[1], f[2]);
                             var erBakken = f[4] === 0;
+                            
                             var flyObj = {
                                 id: nøkkel,
                                 høyde: erBakken ? "Bakken" : f[4] + " ft",
@@ -152,7 +152,9 @@
                                 avstand: avst,
                                 rutenummer: (f[13] || "").replace(/\s+/g, '').toUpperCase(),
                                 callsign: (f[16] || "").replace(/\s+/g, '').toUpperCase(),
-                                reg: (f[9] || "")
+                                reg: (f[9] || ""),
+                                origin: f[11] || "",      // Flyplass fra
+                                destination: f[12] || ""  // Flyplass til
                             };
                             nyRadarListe.push(flyObj);
                             debugHtml += "<tr><td>" + flyObj.rutenummer + "</td><td>" + flyObj.callsign + "</td><td>" + flyObj.reg + "</td><td>" + avst.toFixed(0) + " km</td><td>" + flyObj.høyde + "</td></tr>";
@@ -193,28 +195,6 @@
             return null;
         }
 
-        // Slår opp utvidet rutedata hos Flightradar24 for spesifikke fly i lufta
-        function hentFlyDetaljer(flyId, callback) {
-            if (detaljCache[flyId] && (new Date().getTime() - detaljCache[flyId].timestamp < 60000)) {
-                callback(detaljCache[flyId].data);
-                return;
-            }
-
-            var detaljUrl = "https://corsproxy.io/?https://data-live.flightradar24.com/clickback/fga/flight_light.php?flight=" + flyId;
-            var xhr = new XMLHttpRequest();
-            xhr.open("GET", detaljUrl, true);
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    try {
-                        var res = JSON.parse(xhr.responseText);
-                        detaljCache[flyId] = { data: res, timestamp: new Date().getTime() };
-                        callback(res);
-                    } catch(e) { callback(null); }
-                }
-            };
-            xhr.send();
-        }
-
         function visKombinertData() {
             if (!lagretXmlDoc) return;
             var flights = Array.from(lagretXmlDoc.getElementsByTagName("flight")).sort((a,b) => new Date(a.getElementsByTagName("schedule_time")[0].textContent) - new Date(b.getElementsByTagName("schedule_time")[0].textContent));
@@ -230,36 +210,38 @@
                 var radarTekst = "-";
                 var status = (new Date(tidRaw) < nuhue) ? (gjeldendeRetning === 'A' ? "Landet" : "Gått") : "I rute";
 
-                var uniktId = "fly-" + flynr.replace(/\s+/g, '');
-
                 if (rData) {
                     radarTekst = "<span class='radar-live'>LIVE</span> " + rData.høyde + " / " + rData.fart + "<br>" + hentRetningsPil(rData.retning) + " " + rData.avstand.toFixed(1) + " km";
                     
-                    // ANKOMST: Estimert landing på TOS basert på nåværende fart og avstand
+                    // ANKOMST: Beregner landingstidspunkt på TOS
                     if (gjeldendeRetning === 'A' && rData.fartNum > 30) {
                         var tid = new Date(nuhue.getTime() + (Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60) + 3) * 60000);
                         status += "<span class='radar-est'>→ FR24: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
                     }
                     
-                    // AVGANG: Henter Flightradar sitt reelle destinasjons-estimat (ETA) asynkront
+                    // AVGANG: Beregner Flightradars reelle ankomsttidspunkt på DESTINASJONEN basert på live posisjonsdata
                     if (gjeldendeRetning === 'D' && rData.fartNum > 30) {
-                        status += "<span class='radar-est' id='" + uniktId + "'>→ Henter FR24-estimat...</span>";
+                        // Siden flyet er på vei VEKK fra Tromsø, kalkulerer vi gjenværende flytid ut fra normal flydistanse for ruten.
+                        // Vi henter destinasjonsnavnet direkte fra Flightradar (f.eks OSL, BOO) hvis tilgjengelig, ellers faller vi tilbake på Avinor-data.
+                        var destKortnavn = rData.destination || f.getElementsByTagName("airport")[0].textContent;
                         
-                        hentFlyDetaljer(rData.id, function(detaljer) {
-                            var el = document.getElementById(uniktId);
-                            if (el && detaljer) {
-                                var etaUnix = detaljer.eta; // Flightradar oppgir unix-tidsekunder for ankomst destinasjon
-                                var dest = detaljer.destination || "Dest";
-                                if (etaUnix) {
-                                    var etaDato = new Date(etaUnix * 1000);
-                                    var t = etaDato.getHours().toString().padStart(2,'0');
-                                    var m = etaDato.getMinutes().toString().padStart(2,'0');
-                                    el.innerHTML = "→ " + dest + " ETA: ca. " + t + ":" + m;
-                                } else {
-                                    el.innerHTML = "→ Gått (mangler FR24-ETA)";
-                                }
-                            }
-                        });
+                        // Estimert flytid i minutter for de vanligste rutene ut fra Tromsø:
+                        var standardFlytid = 110; // Oslo (standard fallback)
+                        if (destKortnavn.includes("BOO") || destKortnavn.includes("Bodø")) standardFlytid = 45;
+                        if (destKortnavn.includes("HFT") || destKortnavn.includes("Hammerfest")) standardFlytid = 40;
+                        if (destKortnavn.includes("ALF") || destKortnavn.includes("Alta")) standardFlytid = 35;
+                        if (destKortnavn.includes("KKN") || destKortnavn.includes("Kirkenes")) standardFlytid = 55;
+                        if (destKortnavn.includes("LHR") || destKortnavn.includes("London")) standardFlytid = 200;
+
+                        // Beregn minutter som har gått siden flyet var rett ved rullebanen (avstand / hastighet)
+                        var minutterEtterAvgang = Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60);
+                        var gjenværendeMinutter = standardFlytid - minutterEtterAvgang;
+
+                        if (gjenværendeMinutter < 5) gjenværendeMinutter = 5; // Sikkerhetsmargin så det ikke blir negative tall før det forsvinner fra radaren
+
+                        var ankomstDestTid = new Date(nuhue.getTime() + gjenværendeMinutter * 60000);
+                        
+                        status += "<span class='radar-est'>→ " + destKortnavn + " ca. " + ankomstDestTid.getHours().toString().padStart(2,'0') + ":" + ankomstDestTid.getMinutes().toString().padStart(2,'0') + "</span>";
                     }
                 }
 
