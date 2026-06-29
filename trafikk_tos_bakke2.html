@@ -152,9 +152,7 @@
                                 avstand: avst,
                                 rutenummer: (f[13] || "").replace(/\s+/g, '').toUpperCase(),
                                 callsign: (f[16] || "").replace(/\s+/g, '').toUpperCase(),
-                                reg: (f[9] || ""),
-                                origin: f[11] || "",      // Flyplass fra
-                                destination: f[12] || ""  // Flyplass til
+                                reg: (f[9] || "")
                             };
                             nyRadarListe.push(flyObj);
                             debugHtml += "<tr><td>" + flyObj.rutenummer + "</td><td>" + flyObj.callsign + "</td><td>" + flyObj.reg + "</td><td>" + avst.toFixed(0) + " km</td><td>" + flyObj.høyde + "</td></tr>";
@@ -206,6 +204,8 @@
                 if (f.getElementsByTagName("arr_dep")[0].textContent !== gjeldendeRetning) return;
                 var tidRaw = f.getElementsByTagName("schedule_time")[0].textContent;
                 var flynr = f.getElementsByTagName("flight_id")[0].textContent;
+                var flyplassNavn = f.getElementsByTagName("airport")[0].textContent;
+                
                 var rData = finnRadarMatch(flynr);
                 var radarTekst = "-";
                 var status = (new Date(tidRaw) < nuhue) ? (gjeldendeRetning === 'A' ? "Landet" : "Gått") : "I rute";
@@ -213,39 +213,41 @@
                 if (rData) {
                     radarTekst = "<span class='radar-live'>LIVE</span> " + rData.høyde + " / " + rData.fart + "<br>" + hentRetningsPil(rData.retning) + " " + rData.avstand.toFixed(1) + " km";
                     
-                    // ANKOMST: Beregner landingstidspunkt på TOS
+                    // ANKOMST: Estimert landing på TOS
                     if (gjeldendeRetning === 'A' && rData.fartNum > 30) {
                         var tid = new Date(nuhue.getTime() + (Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60) + 3) * 60000);
-                        status += "<span class='radar-est'>→ FR24: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
+                        status += "<span class='radar-est'>→ TOS: ca. " + tid.getHours().toString().padStart(2,'0') + ":" + tid.getMinutes().toString().padStart(2,'0') + "</span>";
                     }
                     
-                    // AVGANG: Beregner Flightradars reelle ankomsttidspunkt på DESTINASJONEN basert på live posisjonsdata
+                    // AVGANGER: Regner ut live estimert ankomsttid på destinasjonen (f.eks OSL, BOO)
                     if (gjeldendeRetning === 'D' && rData.fartNum > 30) {
-                        // Siden flyet er på vei VEKK fra Tromsø, kalkulerer vi gjenværende flytid ut fra normal flydistanse for ruten.
-                        // Vi henter destinasjonsnavnet direkte fra Flightradar (f.eks OSL, BOO) hvis tilgjengelig, ellers faller vi tilbake på Avinor-data.
-                        var destKortnavn = rData.destination || f.getElementsByTagName("airport")[0].textContent;
+                        // Siden vi vet planlagt avgangstid og nåværende hastighet, kalkulerer vi live progresjon:
+                        var planlagtAvgang = new Date(tidRaw);
+                        var minutterSidenAvreisedato = Math.round((nuhue - planlagtAvgang) / 60000);
                         
-                        // Estimert flytid i minutter for de vanligste rutene ut fra Tromsø:
-                        var standardFlytid = 110; // Oslo (standard fallback)
-                        if (destKortnavn.includes("BOO") || destKortnavn.includes("Bodø")) standardFlytid = 45;
-                        if (destKortnavn.includes("HFT") || destKortnavn.includes("Hammerfest")) standardFlytid = 40;
-                        if (destKortnavn.includes("ALF") || destKortnavn.includes("Alta")) standardFlytid = 35;
-                        if (destKortnavn.includes("KKN") || destKortnavn.includes("Kirkenes")) standardFlytid = 55;
-                        if (destKortnavn.includes("LHR") || destKortnavn.includes("London")) standardFlytid = 200;
-
-                        // Beregn minutter som har gått siden flyet var rett ved rullebanen (avstand / hastighet)
-                        var minutterEtterAvgang = Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60);
-                        var gjenværendeMinutter = standardFlytid - minutterEtterAvgang;
-
-                        if (gjenværendeMinutter < 5) gjenværendeMinutter = 5; // Sikkerhetsmargin så det ikke blir negative tall før det forsvinner fra radaren
-
-                        var ankomstDestTid = new Date(nuhue.getTime() + gjenværendeMinutter * 60000);
+                        // Default flytider basert på destinasjon (om Avinor-dataen mangler detaljert blokktid)
+                        var forventetFlytidMinutter = 115; // Oslo-fallback
+                        if (flyplassNavn.includes("Bodø") || flyplassNavn.includes("BOO")) forventetFlytidMinutter = 50;
+                        if (flyplassNavn.includes("Alta") || flyplassNavn.includes("ALF")) forventetFlytidMinutter = 35;
+                        if (flyplassNavn.includes("Kirkenes") || flyplassNavn.includes("KKN")) forventetFlytidMinutter = 55;
+                        if (flyplassNavn.includes("Hammerfest") || flyplassNavn.includes("HFT")) forventetFlytidMinutter = 40;
+                        if (flyplassNavn.includes("Harstad") || flyplassNavn.includes("EVE")) forventetFlytidMinutter = 35;
                         
-                        status += "<span class='radar-est'>→ " + destKortnavn + " ca. " + ankomstDestTid.getHours().toString().padStart(2,'0') + ":" + ankomstDestTid.getMinutes().toString().padStart(2,'0') + "</span>";
+                        // Live kalkulering av gjenstående tid basert på radarens avstand og fart ut fra rullebanen
+                        var minutterBruktILufta = Math.round((rData.avstand / (rData.fartNum * 1.852)) * 60);
+                        var gjenstaendeTid = forventetFlytidMinutter - minutterBruktILufta;
+                        
+                        if (gjenstaendeTid < 5) gjenstaendeTid = 5; // Unngå negative tall før radaren mister taket
+
+                        var ankomstDestTid = new Date(nuhue.getTime() + gjenstaendeTid * 60000);
+                        var t = ankomstDestTid.getHours().toString().padStart(2,'0');
+                        var m = ankomstDestTid.getMinutes().toString().padStart(2,'0');
+
+                        status += "<span class='radar-est'>→ " + flyplassNavn + ": ca. " + t + ":" + m + "</span>";
                     }
                 }
 
-                html += "<tr><td><strong>" + formaterLokalTid(tidRaw) + "</strong></td><td>" + flynr + "</td><td><strong>" + f.getElementsByTagName("airport")[0].textContent + "</strong></td><td>" + (f.getElementsByTagName("gate")[0]?.textContent || "-") + "</td><td>" + radarTekst + "</td><td>" + status + "</td></tr>";
+                html += "<tr><td><strong>" + formaterLokalTid(tidRaw) + "</strong></td><td>" + flynr + "</td><td><strong>" + flyplassNavn + "</strong></td><td>" + (f.getElementsByTagName("gate")[0]?.textContent || "-") + "</td><td>" + radarTekst + "</td><td>" + status + "</td></tr>";
             });
 
             document.getElementById("dataAvinor").innerHTML = html;
