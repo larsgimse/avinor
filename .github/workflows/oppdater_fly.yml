@@ -1,0 +1,29 @@
+name: Hent data fra Avinor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Kjører nå faktisk hvert 15. minutt
+  workflow_dispatch: # Gjør at vi kan starte den manuelt når som helst
+
+# Gir Action-en lov til å skrive (pushe) endringer til repositoriet
+permissions:
+  contents: write
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Sjekk ut koden
+      uses: actions/checkout@v4
+
+    - name: Last ned XML fra Avinor
+      run: |
+        curl -s "https://asrv.avinor.no/XmlFeed/v1.0?airport=TOS" -o flydata.xml
+
+    - name: Lagre filen i repositoriet
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add flydata.xml
+        git commit -m "Oppdatert flydata fra Avinor (fullstendig dump)" || exit 0
+        git push
